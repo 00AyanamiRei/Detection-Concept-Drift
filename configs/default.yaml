@@ -1,0 +1,21 @@
+# Default configuration
+dataset:
+  name: agrawal
+  max_instances: 2000
+  seed: 42
+
+detector:
+  type: fca
+  window_size: 50
+  theta: 0.4
+  alpha: 2.0
+
+preprocessing:
+  ema_alpha: 0.2
+  hysteresis: 0.02
+  threshold: 0.5
+
+output:
+  dir: experiments/results/default
+  save_csv: true
+  save_plots: true

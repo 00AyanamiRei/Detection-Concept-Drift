@@ -1,0 +1,41 @@
+# Experiment configuration template
+experiment_name: my_experiment
+
+datasets:
+  - name: elec2
+    max_instances: 10000
+    true_drifts: [] # Unknown for Elec2
+
+  - name: agrawal
+    max_instances: 5000
+    true_drifts: [1000, 2000, 3000]
+
+detectors:
+  fca:
+    window_size: 100
+    theta: 0.4
+    alpha: 2.0
+
+  ddm:
+    min_instances: 30
+    warning_level: 2.0
+    drift_level: 3.0
+
+  eddm:
+    min_instances: 30
+    warning_level: 0.95
+    drift_level: 0.90
+
+evaluation:
+  tolerance: 50
+  metrics:
+    - precision
+    - recall
+    - f1_score
+    - detection_delay
+
+output:
+  base_dir: experiments/results
+  save_csv: true
+  save_plots: true
+  save_metrics: true
