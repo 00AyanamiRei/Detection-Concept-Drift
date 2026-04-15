@@ -9,14 +9,24 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 import json
+import re
 import numpy as np
 import random
+import time
+import tracemalloc
 
 # CRITICAL: Set global random seeds for reproducibility
 # This must be done BEFORE any random operations
 GLOBAL_SEED = 42
-np.random.seed(GLOBAL_SEED)
-random.seed(GLOBAL_SEED)
+
+
+def set_global_seed(seed: int) -> None:
+    """Set global RNG state for reproducibility across numpy and stdlib random."""
+    np.random.seed(seed)
+    random.seed(seed)
+
+
+set_global_seed(GLOBAL_SEED)
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
@@ -46,7 +56,10 @@ class DriftDetectionRunner:
 
     def __init__(self, args):
         self.args = args
+        set_global_seed(args.seed)
         self.detector = None
+        self.run_name = self._build_base_run_name()
+        self.output_dir = None
         self._target_label_map = {}
         self._next_target_label_id = 0
         self.results = {
@@ -57,12 +70,61 @@ class DriftDetectionRunner:
                 'window_size': args.window_size,
                 'theta': args.theta,
                 'alpha': args.alpha,
+                'seed': args.seed,
                 'preprocess_freeze_after': args.preprocess_freeze_after,
                 'preprocess_ema_alpha': args.preprocess_ema_alpha,
-                'context_mode': args.context_mode
+                'context_mode': args.context_mode,
+                'merge_gap': args.merge_gap,
+                'dominant_type_mode': args.dominant_type_mode,
+                'signal_smoothing_window': args.signal_smoothing_window,
+                'n_features': args.n_features,
+                'max_fca_attrs': args.max_fca_attrs,
+                'run_id': args.run_id or None,
             },
             'detection_results': {}
         }
+
+    def _sanitize_run_id(self, value: str) -> str:
+        """Keep run-id filesystem-safe and compact."""
+        cleaned = re.sub(r'[^A-Za-z0-9._-]+', '-', value.strip())
+        cleaned = cleaned.strip('-_.')
+        return cleaned[:48] if cleaned else 'run'
+
+    def _build_base_run_name(self) -> str:
+        """Base run name built from key experiment parameters."""
+        dataset_part = self.args.dataset if not self.args.custom_file else "custom"
+        parts = [
+            dataset_part,
+            f"n{self.args.max_instances}",
+            f"w{self.args.window_size}",
+            f"t{self.args.theta:.1f}",
+            f"a{self.args.alpha:.1f}",
+        ]
+        if self.args.run_id:
+            parts.append(f"id{self._sanitize_run_id(self.args.run_id)}")
+        return "_".join(parts)
+
+    def _resolve_output_dir(self) -> Path:
+        """Resolve unique output directory to prevent accidental overwrite."""
+        base_output = Path(self.args.output)
+        base_run_name = self._build_base_run_name()
+        candidate = base_output / base_run_name
+
+        if not candidate.exists():
+            self.run_name = base_run_name
+            return candidate
+
+        # Collision fallback: append timestamp (and counter if needed).
+        timestamp_suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
+        candidate = base_output / f"{base_run_name}_{timestamp_suffix}"
+        counter = 2
+        while candidate.exists():
+            candidate = base_output / f"{base_run_name}_{timestamp_suffix}_{counter}"
+            counter += 1
+
+        self.run_name = candidate.name
+        print(f"[WARNING] Output directory exists. Using unique run directory: {self.run_name}")
+        return candidate
 
     def _is_supervised_mode(self) -> bool:
         """Whether target label should be appended to FCA context."""
@@ -108,7 +170,11 @@ class DriftDetectionRunner:
             return StreamWrapper(custom_stream(), max_instances=self.args.max_instances)
         else:
             # Load from generator
-            reader = StreamReader(self.args.dataset, seed=42)
+            reader = StreamReader(
+                self.args.dataset,
+                seed=self.args.seed,
+                n_features=self.args.n_features,
+            )
             stream = StreamWrapper(reader.stream, max_instances=self.args.max_instances)
             print(f"[OK] Loaded {self.args.dataset} dataset ({self.args.max_instances} instances)")
             return stream
@@ -117,6 +183,9 @@ class DriftDetectionRunner:
         """Run drift detection with given parameters"""
         print("\n[DETECTION] Starting drift detection...")
         print(f"[PARAMS] Window size: {self.args.window_size}, Theta: {self.args.theta}, Alpha: {self.args.alpha}")
+
+        start_time = time.perf_counter()
+        tracemalloc.start()
 
         # Load data
         stream = self.load_data()
@@ -172,13 +241,12 @@ class DriftDetectionRunner:
                 binary_data = preprocessor.preprocess_window(window.get_data())
 
                 # FCA lattice complexity is exponential in n_attributes.
-                # Cap at 15 attributes to keep runtime manageable for wide datasets
-                # (e.g. credit_card has 30 features → too slow without capping).
-                MAX_ATTRS = 15
-                if binary_data.ndim == 2 and binary_data.shape[1] > MAX_ATTRS:
+                # Cap active attributes for FCA complexity control.
+                max_attrs = self.args.max_fca_attrs
+                if binary_data.ndim == 2 and max_attrs > 0 and binary_data.shape[1] > max_attrs:
                     # Keep columns with highest variance (most informative for FCA)
                     col_var = binary_data.var(axis=0)
-                    top_cols = col_var.argsort()[-MAX_ATTRS:]
+                    top_cols = col_var.argsort()[-max_attrs:]
                     binary_data = binary_data[:, top_cols]
 
                 # Build lattice
@@ -195,11 +263,17 @@ class DriftDetectionRunner:
                     if event.signal_idx is not None:
                         drift_types_signal_map[event.signal_idx] = event.drift_type
 
+        elapsed = time.perf_counter() - start_time
+        _, peak_bytes = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+
         self.detector = detector
         self.results['detection_results'] = {
             'total_instances': instance_count,
             'drifts_detected': len(detector.drift_indices),
             'drift_rate': f"{len(detector.drift_indices)/instance_count*100:.2f}%",
+            'runtime_sec_detection': round(elapsed, 3),
+            'peak_python_mem_mb': round(peak_bytes / (1024 * 1024), 3),
             'drift_indices': detector.drift_indices,
             'drift_signal_indices': detector.drift_signal_indices,
             'drift_types': drift_types_map,
@@ -252,6 +326,8 @@ class DriftDetectionRunner:
 
     def _get_merge_gap(self) -> int:
         """Episode merge distance used consistently across reports and plots."""
+        if self.args.merge_gap is not None:
+            return max(int(self.args.merge_gap), 1)
         return max(self.args.window_size // 2, 5)
 
     def _build_ssot_aggregator(self):
@@ -277,6 +353,8 @@ class DriftDetectionRunner:
             n_adapt=10,
             merge_gap=self._get_merge_gap(),
             cooldown=0,
+            dominant_type_mode=self.args.dominant_type_mode,
+            signal_smoothing_window=self.args.signal_smoothing_window,
             intent_diffs=self.detector.intent_diffs if hasattr(self.detector, 'intent_diffs') else None,
         )
 
@@ -347,7 +425,7 @@ class DriftDetectionRunner:
             for rank, ep in enumerate(top_episodes, 1):
                 print(
                     f"  {rank}. Episode #{ep.start_instance_id}-{ep.end_instance_id}: "
-                    f"maxΔL={ep.dlt_max:.4f}, Typ: {ep.dominant_type}, raw_hits={ep.raw_hits_count}"
+                    f"maxDeltaL={ep.dlt_max:.4f}, Typ: {ep.dominant_type}, raw_hits={ep.raw_hits_count}"
                 )
         elif detector.drift_events:
             print("[DETAILY] DETAILS:")
@@ -396,9 +474,10 @@ class DriftDetectionRunner:
             print("[ERROR] No detector results to report")
             return
 
-        # Create output directory
-        output_dir = Path(self.args.output) / self._get_run_name()
+        # Create output directory (collision-safe)
+        output_dir = self._resolve_output_dir()
         output_dir.mkdir(parents=True, exist_ok=True)
+        self.output_dir = output_dir
 
         print(f"\n[AGGREGATION] Aggregating and classifying drifts (SSOT)...")
 
@@ -456,7 +535,7 @@ class DriftDetectionRunner:
                 adaptive_window=self.args.adaptive_window,
                 warm_up_windows=5,
                 merge_gap=self._get_merge_gap(),
-                seed=42
+                seed=self.args.seed
             )
             print(f"[OK] Thesis graphics exported")
         except Exception as e:
@@ -513,14 +592,8 @@ class DriftDetectionRunner:
         print(f"  - JSON results: {json_path}")
 
     def _get_run_name(self):
-        """Generate run name from parameters"""
-        parts = [
-            self.args.dataset if not self.args.custom_file else "custom",
-            f"w{self.args.window_size}",
-            f"t{self.args.theta:.1f}",
-            f"a{self.args.alpha:.1f}"
-        ]
-        return "_".join(parts)
+        """Return effective run name (resolved for collision-safe output)."""
+        return self.run_name
 
     def _get_drift_types_map(self):
         """Get drift types from results"""
@@ -567,6 +640,28 @@ def _validate_arguments(args, parser):
         errors.append("--max-instances must be at least 10 (got: {})".format(args.max_instances))
     if args.max_instances > 100000:
         errors.append("--max-instances should not exceed 100000 (got: {})".format(args.max_instances))
+
+    # Validate synthetic feature count
+    if args.n_features < 2:
+        errors.append("--n-features must be at least 2 (got: {})".format(args.n_features))
+    if args.n_features > 200:
+        errors.append("--n-features should not exceed 200 (got: {})".format(args.n_features))
+
+    # Validate merge/smoothing settings
+    if args.merge_gap is not None and args.merge_gap < 1:
+        errors.append("--merge-gap must be at least 1 (got: {})".format(args.merge_gap))
+    if args.signal_smoothing_window is not None and args.signal_smoothing_window < 1:
+        errors.append("--signal-smoothing-window must be at least 1 (got: {})".format(args.signal_smoothing_window))
+
+    # Validate FCA attribute cap
+    if args.max_fca_attrs < 1:
+        errors.append("--max-fca-attrs must be at least 1 (got: {})".format(args.max_fca_attrs))
+    if args.max_fca_attrs > 200:
+        errors.append("--max-fca-attrs should not exceed 200 (got: {})".format(args.max_fca_attrs))
+
+    # Validate seed
+    if args.seed < 0:
+        errors.append("--seed must be non-negative (got: {})".format(args.seed))
 
     # Validate custom file if provided
     if args.custom_file:
@@ -637,6 +732,12 @@ Examples:
         default=500,
         help='Number of instances to process (default: 500)'
     )
+    dataset_group.add_argument(
+        '--n-features',
+        type=int,
+        default=10,
+        help='Number of features for synthetic streams that support it (default: 10)'
+    )
 
     # Detection parameters
     param_group = parser.add_argument_group('Detection Parameters')
@@ -665,10 +766,43 @@ Examples:
         help='Window size for rolling adaptive threshold (default: 10 windows)'
     )
     param_group.add_argument(
+        '--merge-gap',
+        type=int,
+        default=None,
+        help='Episode merge gap in signal indices (default: window_size/2)'
+    )
+    param_group.add_argument(
+        '--signal-smoothing-window',
+        type=int,
+        default=None,
+        help='Smoothing window for SSOT signal shaping (default: internal adaptive value)'
+    )
+    param_group.add_argument(
+        '--dominant-type-mode',
+        type=str,
+        choices=['weighted', 'count'],
+        default='weighted',
+        help='How to determine dominant drift type: weighted priority or pure count (default: weighted)'
+    )
+    param_group.add_argument(
+        '--max-fca-attrs',
+        type=int,
+        default=15,
+        help='Maximum number of attributes kept for FCA context (default: 15)'
+    )
+    param_group.add_argument(
+        '--seed',
+        type=int,
+        default=42,
+        help='Random seed for stream generation and deterministic behavior (default: 42)'
+    )
+    param_group.add_argument(
         '--preprocess-freeze-after',
+        '--preprocessfreeze-after',
+        dest='preprocess_freeze_after',
         type=int,
         default=2500,
-        help='Number of windows used to calibrate preprocessing thresholds before freezing (default: 2500)'
+        help='Number of windows used to calibrate preprocessing thresholds before freezing (default: 2500). Legacy alias: --preprocessfreeze-after'
     )
     param_group.add_argument(
         '--preprocess-ema-alpha',
@@ -696,6 +830,12 @@ Examples:
         type=str,
         default='experiments/results',
         help='Output directory (default: experiments/results)'
+    )
+    output_group.add_argument(
+        '--run-id',
+        type=str,
+        default='',
+        help='Optional custom run identifier appended to output directory name (collision-safe).'
     )
     output_group.add_argument(
         '--language',

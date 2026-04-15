@@ -108,6 +108,8 @@ class DriftAggregatorV2:
         drift_signal_indices: Optional[List[int]] = None,
         # Backward-compatible alias: interpreted as signal indices.
         drift_indices: Optional[List[int]] = None,
+        dominant_type_mode: str = "weighted",
+        signal_smoothing_window: Optional[int] = None,
     ):
         self.delta_L = np.array(delta_L_history, dtype=float)
         self.similarity = np.array(similarity_history, dtype=float)
@@ -119,7 +121,16 @@ class DriftAggregatorV2:
         self.alpha = float(alpha)
         self.n_adapt = int(n_adapt)
         self.z_window = max(self.window_size * 2, self.n_adapt * 3, 30)
-        self.signal_smooth_window = max(3, min(self.SIGNAL_SMOOTH_WINDOW, max(self.window_size, 3)))
+
+        mode = str(dominant_type_mode).strip().lower()
+        if mode not in {"weighted", "count"}:
+            mode = "weighted"
+        self.dominant_type_mode = mode
+
+        if signal_smoothing_window is None:
+            self.signal_smooth_window = max(3, min(self.SIGNAL_SMOOTH_WINDOW, max(self.window_size, 3)))
+        else:
+            self.signal_smooth_window = max(1, int(signal_smoothing_window))
 
         raw_indices = drift_signal_indices if drift_signal_indices is not None else drift_indices
         self.drift_signal_indices = sorted({int(i) for i in (raw_indices or [])})
@@ -172,7 +183,7 @@ class DriftAggregatorV2:
             counts[ep.dominant_type] = counts.get(ep.dominant_type, 0) + 1
         return counts
 
-    def get_dominant_type(self) -> str:
+    def get_weighted_type(self) -> str:
         episodes = self.get_merged_episodes()
         if not episodes:
             return "none"
@@ -184,6 +195,17 @@ class DriftAggregatorV2:
             weighted[ep.dominant_type] = weighted.get(ep.dominant_type, 0.0) + weight * boost
 
         return max(weighted.items(), key=lambda x: x[1])[0]
+
+    def get_majority_type(self) -> str:
+        counts = self.get_type_counts()
+        if not counts:
+            return "none"
+        return max(counts.items(), key=lambda x: x[1])[0]
+
+    def get_dominant_type(self) -> str:
+        if self.dominant_type_mode == "count":
+            return self.get_majority_type()
+        return self.get_weighted_type()
 
     def get_drift_rate(self) -> float:
         episodes = self.get_merged_episodes()
@@ -202,6 +224,9 @@ class DriftAggregatorV2:
             "merged_episodes_count": len(episodes),
             "drift_rate_percent": self.get_drift_rate(),
             "counts_by_type": self.get_type_counts(),
+            "dominant_type_mode": self.dominant_type_mode,
+            "dominant_type_majority": self.get_majority_type(),
+            "dominant_type_weighted": self.get_weighted_type(),
             "dominant_type": self.get_dominant_type(),
             "parameters": {
                 "window_size": self.window_size,

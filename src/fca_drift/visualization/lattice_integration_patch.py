@@ -280,30 +280,36 @@ function toggleLattice(epId) {
 
 def _b64_png(
     snapshot_collector: Optional[LatticeSnapshotCollector],
-    ep_start: int,
+  snap,
+  ep_anchor: int,
     ep_id: int,
     dlt_max: float,
     output_dir: Optional[str],
 ) -> Optional[str]:
-    """Повертає base64 PNG або None якщо snapshot недоступний."""
-    if snapshot_collector is None:
-        return None
-    try:
-        snap = snapshot_collector.get_nearest(ep_start, window=10)
-        if snap is None:
-            return None
-        return _VIZ.render_comparison_png(
-            intents_before = snap.intents_before,
-            intents_after  = snap.intents_after,
-            episode_id     = ep_id,
-            delta_lt       = dlt_max,
-            output_dir     = output_dir,
-        )
-    except Exception as e:
-        # Fallback: return None if PNG rendering fails
-        import sys
-        print(f"[WARNING] PNG rendering for episode {ep_id} failed: {e}", file=sys.stderr)
-        return None
+  """Return base64 PNG or None when snapshot/renderer is unavailable."""
+  if snapshot_collector is None:
+    return None
+
+  try:
+    if snap is None:
+      # Last-resort global fallback to avoid losing lattice diagram in report.
+      snap = snapshot_collector.get_nearest(ep_anchor, window=1_000_000)
+
+    if snap is None:
+      return None
+
+    return _VIZ.render_comparison_png(
+      intents_before=snap.intents_before,
+      intents_after=snap.intents_after,
+      episode_id=ep_id,
+      delta_lt=dlt_max,
+      output_dir=output_dir,
+    )
+  except Exception as exc:
+    import sys
+
+    print(f"[WARNING] PNG rendering for episode {ep_id} failed: {exc}", file=sys.stderr)
+    return None
 
 
 def generate_episode_row(
@@ -338,7 +344,24 @@ def generate_episode_row(
     # Текстові деталі (якщо збережені в епізоді)
     snap = None
     if snapshot_collector:
-      snap = snapshot_collector.get_nearest(ep_center, window=10)
+      candidate_ids = [int(ep_start), int(ep_center), int(ep_end)]
+      search_window = max(10, int(duration // 2) + 2)
+
+      # 1) exact hits first
+      for candidate in candidate_ids:
+        snap = snapshot_collector.get(candidate)
+        if snap is not None:
+          break
+
+      # 2) local nearest fallback with expanding windows
+      if snap is None:
+        for window in (search_window, max(search_window * 3, 25), 1_000_000):
+          for candidate in candidate_ids:
+            snap = snapshot_collector.get_nearest(candidate, window=window)
+            if snap is not None:
+              break
+          if snap is not None:
+            break
 
     lost_text = gained_text = stable_text = ""
     concepts_change = ""
@@ -351,7 +374,7 @@ def generate_episode_row(
         concepts_change = f"{len(snap.intents_before)} → {len(snap.intents_after)}"
 
     # PNG граф
-    b64 = _b64_png(snapshot_collector, ep_center, ep_id, dlt_max, output_dir)
+    b64 = _b64_png(snapshot_collector, snap, int(ep_start), ep_id, dlt_max, output_dir)
     lattice_btn = ""
     lattice_graph = ""
     if b64:
@@ -363,6 +386,8 @@ def generate_episode_row(
           <img src="data:image/png;base64,{b64}"
                alt="Lattice comparison episode {ep_id}"/>
         </div>"""
+    else:
+        lattice_btn = '<span style="color:#999;font-size:.8rem;">N/A</span>'
 
     type_colors = {
         "SUDDEN":      ("fde8e8", "c0392b"),

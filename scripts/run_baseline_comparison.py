@@ -100,17 +100,32 @@ def _run_error_based_detector(dataset: str, max_instances: int, method: str) -> 
     }
 
 
-def _load_fca_result(dataset: str, window_size: int) -> Dict[str, float]:
-    """Load FCA result JSON if present."""
-    result_path = (
-        PROJECT_ROOT
-        / "experiments"
-        / "results"
-        / f"{dataset}_w{window_size}_t0.5_a1.5"
-        / "results.json"
-    )
+def _load_fca_result(dataset: str, window_size: int, max_instances: int) -> Dict[str, float]:
+    """Load FCA result JSON if present.
 
-    if not result_path.exists():
+    Supports both legacy run directory naming and the current collision-safe naming
+    that includes max instances.
+    """
+    candidates = [
+        (
+            PROJECT_ROOT
+            / "experiments"
+            / "results"
+            / f"{dataset}_n{max_instances}_w{window_size}_t0.5_a1.5"
+            / "results.json"
+        ),
+        (
+            PROJECT_ROOT
+            / "experiments"
+            / "results"
+            / f"{dataset}_w{window_size}_t0.5_a1.5"
+            / "results.json"
+        ),
+    ]
+
+    result_path = next((p for p in candidates if p.exists()), None)
+
+    if result_path is None:
         return {
             "fca_instances": 0,
             "fca_raw": 0,
@@ -168,7 +183,7 @@ def run_comparison(output_csv: Path) -> List[Dict[str, float]]:
             eddm = {"instances": 0, "raw_alarms": 0, "runtime_sec": 0.0}
 
         # Load existing FCA outputs.
-        fca = _load_fca_result(dataset, window_size)
+        fca = _load_fca_result(dataset, window_size, max_instances)
 
         row = {
             "dataset": dataset,

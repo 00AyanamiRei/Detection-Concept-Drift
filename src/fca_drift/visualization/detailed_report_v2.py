@@ -249,12 +249,8 @@ class DetailedReportGeneratorV2:
         if aggregator is not None:
             episodes = aggregator.get_merged_episodes()
             if episodes:
-                # OPTIMIZATION: Skip PNG rendering for large episode counts (>50 episodes)
-                # PNG rendering is extremely slow for large datasets and may cause timeouts
-                use_png = len(episodes) <= 50 and snapshot_collector is not None
-                if len(episodes) > 50:
-                    print(f"[INFO] Skipping PNG rendering for {len(episodes)} episodes (too many). HTML will still include all tables and statistics.", file=__import__('sys').stderr)
-                    snapshot_collector = None  # Disable PNG rendering
+                if snapshot_collector is None:
+                    print("[WARNING] Lattice snapshot collector not available; lattice diagrams may be missing.", file=__import__('sys').stderr)
 
                 episode_details_html = """<table style='width: 100%; border-collapse: collapse; margin-top: 10px;'>
                 <tr style='background: #f5f5f5; border-bottom: 2px solid #667eea;'>
