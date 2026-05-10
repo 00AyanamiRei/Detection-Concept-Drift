@@ -1,0 +1,16 @@
+{
+  "description": "Test dataset for sudden drift detection",
+  "drift_type": "sudden",
+  "total_instances": 5000,
+  "window_size_recommendation": 300,
+  "expected_drift": {
+    "type": "sudden",
+    "start": 2000,
+    "duration": 20,
+    "end": 2019
+  },
+  "expected_detection_window": {
+    "min": 1500,
+    "max": 2520
+  }
+}

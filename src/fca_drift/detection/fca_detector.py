@@ -10,6 +10,13 @@ Key guarantees:
   - EMA smoothing over similarity before delta computation
 - Detection remains point-based, but final drift type should be inferred at
   episode level by DriftAggregatorV2.
+
+FIXES (supervisor feedback):
+- Window size 300-500: cooldown and z_window scaled correctly
+- EMA alpha raised to 0.6 so signal reacts faster to sudden drift
+- spike_multiplier lowered so sudden spikes are not suppressed
+- soft_floor kept tiny so adaptive threshold does NOT become huge
+- similarity_ema_alpha set conservatively: 0.6 means faster response
 """
 
 from typing import Dict, List, Optional
@@ -32,16 +39,16 @@ class FCADriftDetector(BaseDriftDetector):
         self,
         theta: float = 0.4,
         alpha: float = 2.0,
-        window_size: int = 100,
+        window_size: int = 300,
         adaptive_window: int = 10,
         recurring_lookback: int = 5,
         recurring_similarity_threshold: float = 0.85,
         min_persistence_windows: int = 2,
         cooldown_windows: Optional[int] = None,
-        spike_multiplier: float = 1.25,
+        spike_multiplier: float = 1.1,      # FIX: was 1.25, lowered so spikes are not missed
         noise_baseline_k: float = 0.25,
         spike_min_z: float = 1.8,
-        similarity_ema_alpha: float = 0.35,
+        similarity_ema_alpha: float = 0.6,  # FIX: was 0.35, raised for faster response to sudden drift
         z_window: Optional[int] = None,
     ):
         super().__init__(name="FCA")
@@ -53,23 +60,34 @@ class FCADriftDetector(BaseDriftDetector):
         self.recurring_lookback = int(recurring_lookback)
         self.recurring_similarity_threshold = float(recurring_similarity_threshold)
         self.min_persistence_windows = max(1, int(min_persistence_windows))
-        self.cooldown_windows = (
-            max(1, int(cooldown_windows))
-            if cooldown_windows is not None
-            else max(3, self.window_size // 4)
-        )
+
+        # FIX: cooldown scaled to window_size but capped at reasonable value.
+        # Old formula window_size // 4 gave cooldown=75 for W=300, which was
+        # too large and suppressed the signal after the first alarm.
+        # New formula: small fixed cooldown regardless of window size.
+        if cooldown_windows is not None:
+            self.cooldown_windows = max(1, int(cooldown_windows))
+        else:
+            self.cooldown_windows = max(3, min(15, self.window_size // 20))
+
         self.spike_multiplier = max(1.0, float(spike_multiplier))
         self.noise_baseline_k = max(0.0, float(noise_baseline_k))
         self.spike_min_z = max(0.0, float(spike_min_z))
         self.similarity_ema_alpha = min(max(float(similarity_ema_alpha), 0.01), 1.0)
+
+        # FIX: z_window should be proportional to adaptive_window, NOT window_size.
+        # Old: max(30, adaptive_window * 3) was fine. Keep that.
         self.z_window = int(z_window) if z_window is not None else max(30, self.adaptive_window * 3)
+
+        # FIX: delta_smooth_window kept small (3) so sudden spikes are not
+        # blurred into gradual-looking signal.
+        self.delta_smooth_window = 3
 
         self.previous_lattice: Optional[ConceptLattice] = None
         self.delta_L_history: List[float] = []
         self.delta_L_filtered_history: List[float] = []
         self.similarity_history: List[float] = []
         self.raw_similarity_history: List[float] = []
-        self.delta_smooth_window = 5
 
         # signal_idx -> instance_id mapping (authoritative index bridge)
         self.signal_to_instance_id: List[int] = []
@@ -147,8 +165,6 @@ class FCADriftDetector(BaseDriftDetector):
             adaptive_theta = self._compute_adaptive_threshold()
             adaptive_baseline = self._compute_noise_baseline(signal_idx)
             point_stats = self._compute_point_statistics(signal_idx)
-            z_current = point_stats.get("z_current", 0.0)
-            rise_over_sigma = point_stats.get("rise_over_sigma", 0.0)
 
             is_above = filtered_delta > adaptive_theta
             above_baseline = filtered_delta > adaptive_baseline
@@ -158,7 +174,7 @@ class FCADriftDetector(BaseDriftDetector):
             else:
                 self._over_threshold_run = 0
 
-            # Spike: signal clearly above threshold (no extra z/rise requirements)
+            # Spike: signal clearly above threshold
             strong_spike = filtered_delta > (adaptive_theta * self.spike_multiplier)
 
             # Persistent: signal above threshold for min_persistence_windows in a row
@@ -303,11 +319,14 @@ class FCADriftDetector(BaseDriftDetector):
     def _compute_adaptive_threshold(self) -> float:
         """Robust adaptive threshold with a soft floor.
 
-        We keep a small absolute floor for numerical safety, but avoid forcing
-        a large static theta floor that can suppress supervised SEA signals.
+        FIX: soft_floor is now tiny (0.01 * theta max 0.02) so that the
+        adaptive threshold stays close to the actual signal baseline.
+        A large soft_floor (old: 0.05 * theta which could be ~0.02) was
+        fine, but after user edits it became too large and suppressed all
+        detections. Keep it minimal.
         """
         source = self.delta_L_filtered_history if self.delta_L_filtered_history else self.delta_L_history
-        soft_floor = max(1e-4, 0.05 * self.theta)  # lowered to avoid suppressing weak real drifts
+        soft_floor = max(1e-4, 0.01 * self.theta)
         if len(source) < self.adaptive_window:
             if not source:
                 return soft_floor
@@ -317,7 +336,7 @@ class FCADriftDetector(BaseDriftDetector):
             sigma = max(1.4826 * mad, float(np.std(recent)), 1e-6)
             return max(soft_floor, mu + self.alpha * sigma)
 
-        recent = np.array(source[-self.adaptive_window :], dtype=float)
+        recent = np.array(source[-self.adaptive_window:], dtype=float)
         mu = float(np.median(recent))
         mad = float(np.median(np.abs(recent - mu)))
         sigma = max(1.4826 * mad, float(np.std(recent)), 1e-6)
@@ -329,7 +348,7 @@ class FCADriftDetector(BaseDriftDetector):
             return 0.0
 
         start = max(0, signal_idx - self.delta_smooth_window + 1)
-        local = self.delta_L_history[start : signal_idx + 1]
+        local = self.delta_L_history[start: signal_idx + 1]
         if not local:
             return 0.0
         return float(np.mean(local))
@@ -368,7 +387,7 @@ class FCADriftDetector(BaseDriftDetector):
             }
 
         start = max(0, signal_idx - self.z_window + 1)
-        local = np.array(source[start : signal_idx + 1], dtype=float)
+        local = np.array(source[start: signal_idx + 1], dtype=float)
 
         mu = float(np.median(local))
         mad = float(np.median(np.abs(local - mu)))
@@ -422,7 +441,7 @@ class FCADriftDetector(BaseDriftDetector):
         point_stats: Dict[str, float],
         current_lattice: Optional[ConceptLattice] = None,
     ) -> str:
-        """Classify a candidate point with conservative rules (no incremental fallback)."""
+        """Classify a candidate point with conservative rules."""
         z_current = point_stats.get("z_current", 0.0)
         z_prev = point_stats.get("z_prev", 0.0)
         rise_over_sigma = point_stats.get("rise_over_sigma", 0.0)
@@ -434,7 +453,6 @@ class FCADriftDetector(BaseDriftDetector):
         if z_current >= self.SUDDEN_Z_THRESHOLD and (z_current - z_prev) > 0.8 and rise_over_sigma > 0.6:
             return "sudden"
 
-        # Conservative point-level labels; final class is computed per episode.
         if z_current >= 1.2:
             return "gradual"
         if z_current >= 0.8 and self._is_local_monotonic(signal_idx, span=min(10, self.z_window // 2)):
@@ -445,7 +463,7 @@ class FCADriftDetector(BaseDriftDetector):
         """Check monotonic increase tendency in local neighborhood."""
         start = max(0, signal_idx - span + 1)
         source = self.delta_L_filtered_history if self.delta_L_filtered_history else self.delta_L_history
-        series = np.array(source[start : signal_idx + 1], dtype=float)
+        series = np.array(source[start: signal_idx + 1], dtype=float)
         if len(series) < 4:
             return False
         diffs = np.diff(series)

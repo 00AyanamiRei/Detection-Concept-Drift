@@ -12,6 +12,12 @@ from fca_drift.fca import build_formal_context, ConceptLattice
 from fca_drift.detection import FCADriftDetector, DDM, EDDM
 from fca_drift.evaluation import DriftEvaluator, print_evaluation_report
 
+try:
+    from river import naive_bayes
+    RIVER_AVAILABLE = True
+except ImportError:
+    RIVER_AVAILABLE = False
+
 
 class DetectorComparison:
     """
@@ -25,8 +31,8 @@ class DetectorComparison:
 
     def run_comparison(self,
                       dataset_name: str,
-                      max_instances: int = 2000,
-                      window_size: int = 50,
+                      max_instances: int = 10000,
+                      window_size: int = 300,
                       true_drifts: List[int] = None):
         """
         Run all detectors on same stream
@@ -36,11 +42,14 @@ class DetectorComparison:
         print(f"{'='*70}\n")
 
         # Initialize stream and preprocessing
-        reader = StreamReader(dataset_name, seed=42)
+        reader_kwargs = {}
+        if dataset_name.lower() in {"agrawal", "sea"}:
+            reader_kwargs["drift_positions"] = [max_instances // 2]
+        reader = StreamReader(dataset_name, seed=42, **reader_kwargs)
         stream = StreamWrapper(reader.stream, max_instances=max_instances)
 
         # Initialize detectors
-        fca_detector = FCADriftDetector(theta=0.4, alpha=2.0, window_size=window_size)
+        fca_detector = FCADriftDetector(theta=0.5, alpha=1.5, window_size=window_size)
         ddm_detector = DDM(min_instances=30, warning_level=2.0, drift_level=3.0)
         eddm_detector = EDDM(min_instances=30, warning_level=0.95, drift_level=0.90)
 
@@ -50,6 +59,12 @@ class DetectorComparison:
 
         # Process stream
         print("Processing stream...")
+        if RIVER_AVAILABLE:
+            model = naive_bayes.GaussianNB()
+        else:
+            model = None
+            running_mean = None
+
         for idx, (x, y) in enumerate(stream):
             window.append(x)
 
@@ -62,8 +77,18 @@ class DetectorComparison:
                 fca_detector.update(lattice, idx)
 
             # DDM and EDDM (need error signal)
-            # Simulate error as deviation from mean
-            error = sum(x.values()) > sum(x.values()) / 2
+            if model is not None and y is not None:
+                y_pred = model.predict_one(x)
+                if y_pred is None:
+                    y_pred = 0
+                error = (y_pred != y)
+                model.learn_one(x, y)
+            else:
+                feature_sum = float(sum(x.values()))
+                if running_mean is None:
+                    running_mean = feature_sum
+                error = (feature_sum > running_mean) != bool(y) if y is not None else False
+                running_mean = 0.9 * running_mean + 0.1 * feature_sum
             ddm_detector.update(error, idx)
             eddm_detector.update(error, idx)
 
@@ -146,8 +171,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='Compare Drift Detectors')
     parser.add_argument('--dataset', type=str, default='agrawal')
-    parser.add_argument('--max-instances', type=int, default=2000)
-    parser.add_argument('--window-size', type=int, default=50)
+    parser.add_argument('--max-instances', type=int, default=10000)
+    parser.add_argument('--window-size', type=int, default=300)
     parser.add_argument('--output-dir', type=str, default='experiments/results/comparison')
 
     args = parser.parse_args()

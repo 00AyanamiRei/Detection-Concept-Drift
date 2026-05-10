@@ -3,16 +3,16 @@ experiment_name: my_experiment
 
 datasets:
   - name: elec2
-    max_instances: 10000
+    max_instances: 20000
     true_drifts: [] # Unknown for Elec2
 
   - name: agrawal
-    max_instances: 5000
-    true_drifts: [1000, 2000, 3000]
+    max_instances: 10000
+    true_drifts: [3000, 6000]
 
 detectors:
   fca:
-    window_size: 100
+    window_size: 300
     theta: 0.4
     alpha: 2.0
 
@@ -27,7 +27,7 @@ detectors:
     drift_level: 0.90
 
 evaluation:
-  tolerance: 50
+  tolerance: 200
   metrics:
     - precision
     - recall

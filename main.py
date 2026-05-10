@@ -28,6 +28,29 @@ def set_global_seed(seed: int) -> None:
 
 set_global_seed(GLOBAL_SEED)
 
+
+def _recommended_window_size(max_instances: int) -> int:
+    """Recommend window size based on stream length.
+
+    Uses a simple heuristic with bounds [300, 500].
+    """
+    if max_instances <= 0:
+        return 300
+    return max(300, min(500, int(round(max_instances * 0.05))))
+
+
+def _parse_drift_positions(raw: str | None, fallback: int | None) -> list[int]:
+    """Parse drift positions from comma/space-separated string."""
+    if raw is None or str(raw).strip() == "":
+        return [int(fallback)] if fallback is not None else []
+    parts = re.split(r"[,;\s]+", str(raw).strip())
+    positions = []
+    for part in parts:
+        if not part:
+            continue
+        positions.append(int(part))
+    return sorted(set(positions))
+
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
@@ -68,9 +91,13 @@ class DriftDetectionRunner:
                 'dataset': args.dataset,
                 'max_instances': args.max_instances,
                 'window_size': args.window_size,
+                'window_step': args.window_step,
                 'theta': args.theta,
                 'alpha': args.alpha,
                 'seed': args.seed,
+                'auto_window_size': args.auto_window_size,
+                'drift_position': args.drift_position,
+                'drift_positions': args.drift_positions,
                 'preprocess_freeze_after': args.preprocess_freeze_after,
                 'preprocess_ema_alpha': args.preprocess_ema_alpha,
                 'context_mode': args.context_mode,
@@ -174,6 +201,8 @@ class DriftDetectionRunner:
                 self.args.dataset,
                 seed=self.args.seed,
                 n_features=self.args.n_features,
+                drift_position=self.args.drift_position,
+                drift_positions=self.args.drift_positions,
             )
             stream = StreamWrapper(reader.stream, max_instances=self.args.max_instances)
             print(f"[OK] Loaded {self.args.dataset} dataset ({self.args.max_instances} instances)")
@@ -192,10 +221,27 @@ class DriftDetectionRunner:
 
         # Initialize components
         window = SlidingWindow(size=self.args.window_size)
+
+        total_windows = max(self.args.max_instances - self.args.window_size + 1, 1)
+        window_step = max(1, self.args.window_step)
+        freeze_after = self.args.preprocess_freeze_after
+        if window_step > 1:
+            scaled_freeze_after = max(10, int(freeze_after / window_step))
+            if scaled_freeze_after != freeze_after:
+                print(
+                    f"[INFO] preprocess_freeze_after scaled to {scaled_freeze_after} "
+                    f"due to window_step={window_step}."
+                )
+                freeze_after = scaled_freeze_after
+        if freeze_after > total_windows:
+            freeze_after = max(10, total_windows // 2)
+            print(f"[WARNING] preprocess_freeze_after reduced to {freeze_after} (short stream).")
+            self.args.preprocess_freeze_after = freeze_after
+
         preprocessor = DataPreprocessor(
             threshold=0.5,
             adaptive_threshold=True,
-            freeze_after=self.args.preprocess_freeze_after,
+            freeze_after=freeze_after,
             ema_alpha=self.args.preprocess_ema_alpha,
         )
 
@@ -206,6 +252,20 @@ class DriftDetectionRunner:
         else:
             recurring_threshold = self.args.recurring_threshold
 
+        base_persistence = max(3, self.args.window_size // 25)
+        min_persistence = max(2, int(base_persistence / window_step))
+        # FIX: old formula window_size // 5 gave cooldown=60 for W=300, cooldown=100 for W=500.
+        # After one alarm the detector was silent for 60-100 signal steps — so a real
+        # sudden drift at position 5000 was missed if it produced only a short burst.
+        # New formula: small fixed cooldown (max 10 steps) independent of window size.
+        base_cooldown = max(3, min(10, self.args.window_size // 30))
+        cooldown_windows = max(1, int(base_cooldown / window_step))
+        if window_step > 1:
+            print(
+                f"[INFO] window_step={window_step}: "
+                f"min_persistence_windows={min_persistence}, cooldown_windows={cooldown_windows}"
+            )
+
         detector = FCADriftDetector(
             theta=self.args.theta,
             alpha=self.args.alpha,
@@ -214,19 +274,23 @@ class DriftDetectionRunner:
             recurring_similarity_threshold=recurring_threshold,
             # Anti-noise parameters:
             # Require longer persistence to reduce repetitive micro-alerts.
-            min_persistence_windows=max(3, self.args.window_size // 25),
+            min_persistence_windows=min_persistence,
             # Short cooldown suppresses immediate retriggers after one alarm.
-            cooldown_windows=max(self.args.window_size // 5, 3),
+            cooldown_windows=cooldown_windows,
             # More conservative spike path for abrupt-change alarms.
             spike_multiplier=1.8,
             noise_baseline_k=0.25,
             spike_min_z=1.8,
         )
 
-        # Process stream
+        # Process stream - consecutive window comparison.
+        # Every window is compared to the previous one (standard FCA drift approach).
+        # For large window sizes (300-500), we use window_step to skip rows between
+        # FCA builds — this gives a sparser but faster signal.
         drift_types_map = {}
         drift_types_signal_map = {}
         instance_count = 0
+        full_windows_seen = 0
 
         for idx, (x, y) in enumerate(stream):
             x_for_window = dict(x)
@@ -237,31 +301,45 @@ class DriftDetectionRunner:
             instance_count += 1
 
             if window.is_full():
+                full_windows_seen += 1
+                if (full_windows_seen - 1) % self.args.window_step != 0:
+                    continue
+
                 # Preprocess window
                 binary_data = preprocessor.preprocess_window(window.get_data())
 
-                # FCA lattice complexity is exponential in n_attributes.
-                # Cap active attributes for FCA complexity control.
+                # Cap attributes for FCA complexity control.
                 max_attrs = self.args.max_fca_attrs
                 if binary_data.ndim == 2 and max_attrs > 0 and binary_data.shape[1] > max_attrs:
-                    # Keep columns with highest variance (most informative for FCA)
                     col_var = binary_data.var(axis=0)
                     top_cols = col_var.argsort()[-max_attrs:]
                     binary_data = binary_data[:, top_cols]
 
-                # Build lattice
+                # Build lattice. max_objects=50 keeps FCA fast regardless of window_size.
                 context = build_formal_context(binary_data)
                 lattice = ConceptLattice()
-                lattice.build_from_context(context)
+                lattice.build_from_context(context, max_objects=50)
 
                 # Update detector
                 event = detector.update(lattice, idx)
 
-                # Store drift type from detector (already classified correctly)
                 if event is not None:
                     drift_types_map[event.instance_id] = event.drift_type
                     if event.signal_idx is not None:
                         drift_types_signal_map[event.signal_idx] = event.drift_type
+
+        # Print signal diagnostics so we can tune threshold without running debug scripts
+        if detector.delta_L_history:
+            dl = detector.delta_L_history
+            import numpy as np
+            mu = float(np.median(dl))
+            sigma = max(float(np.std(dl)), 1e-6)
+            adaptive_thr = mu + self.args.alpha * sigma
+            above_thr = sum(1 for v in dl if v > adaptive_thr)
+            print(f"[SIGNAL] delta_L: mean={np.mean(dl):.4f}, median={mu:.4f}, "
+                  f"std={sigma:.4f}, max={max(dl):.4f}")
+            print(f"[SIGNAL] adaptive_threshold≈{adaptive_thr:.4f} "
+                  f"(median+{self.args.alpha}*std), points_above: {above_thr}/{len(dl)}")
 
         elapsed = time.perf_counter() - start_time
         _, peak_bytes = tracemalloc.get_traced_memory()
@@ -328,7 +406,9 @@ class DriftDetectionRunner:
         """Episode merge distance used consistently across reports and plots."""
         if self.args.merge_gap is not None:
             return max(int(self.args.merge_gap), 1)
-        return max(self.args.window_size // 2, 5)
+        # FIX: was window_size // 2 (e.g. 250 for W=500) — too large, merged
+        # unrelated episodes. Now window_size // 4 (e.g. 125 for W=500).
+        return max(self.args.window_size // 4, 5)
 
     def _build_ssot_aggregator(self):
         """Create DriftAggregatorV2 as single source of truth for drift episodes."""
@@ -609,6 +689,13 @@ def _validate_arguments(args, parser):
         errors.append("--window-size must be at least 10 (got: {})".format(args.window_size))
     if args.window_size > 500:
         errors.append("--window-size must not exceed 500 (got: {})".format(args.window_size))
+    if args.window_size < 300:
+        print("[WARNING] --window-size below 300. Thesis experiments recommend 300-500.")
+
+    if args.window_step < 1:
+        errors.append("--window-step must be at least 1 (got: {})".format(args.window_step))
+    if args.window_step > args.window_size:
+        print("[WARNING] --window-step greater than window size; results may be too sparse.")
 
     # Validate theta
     if args.theta <= 0 or args.theta >= 1:
@@ -640,6 +727,8 @@ def _validate_arguments(args, parser):
         errors.append("--max-instances must be at least 10 (got: {})".format(args.max_instances))
     if args.max_instances > 100000:
         errors.append("--max-instances should not exceed 100000 (got: {})".format(args.max_instances))
+    if args.max_instances < args.window_size * 3:
+        print("[WARNING] max_instances is small relative to window_size. Consider >= 3x window size.")
 
     # Validate synthetic feature count
     if args.n_features < 2:
@@ -682,6 +771,13 @@ def _validate_arguments(args, parser):
             errors.append("--dataset '{}' not available. Choose from: {}".format(
                 args.dataset, ', '.join(available_datasets)))
 
+    if args.drift_positions:
+        invalid = [p for p in args.drift_positions if p <= 0]
+        if invalid:
+            errors.append("--drift-positions must be positive (got: {})".format(invalid))
+        if args.max_instances <= max(args.drift_positions):
+            print("[WARNING] max_instances is <= max drift position; some drifts will not occur.")
+
 
     # Check if both custom file and dataset are specified
     if args.custom_file and args.dataset != 'agrawal':
@@ -704,7 +800,7 @@ def main():
 Examples:
   python main.py --dataset agrawal --max-instances 2000
   python main.py --dataset agrawal --window-size 75 --theta 0.3 --alpha 1.5
-  python main.py --custom-file mydata.csv --window-size 50
+    python main.py --custom-file mydata.csv --window-size 300
         """
     )
 
@@ -729,8 +825,8 @@ Examples:
     dataset_group.add_argument(
         '--max-instances',
         type=int,
-        default=500,
-        help='Number of instances to process (default: 500)'
+        default=10000,
+        help='Number of instances to process (default: 10000)'
     )
     dataset_group.add_argument(
         '--n-features',
@@ -738,14 +834,32 @@ Examples:
         default=10,
         help='Number of features for synthetic streams that support it (default: 10)'
     )
+    dataset_group.add_argument(
+        '--drift-position',
+        type=int,
+        default=5000,
+        help='Single drift position for synthetic streams (default: 5000)'
+    )
+    dataset_group.add_argument(
+        '--drift-positions',
+        type=str,
+        default=None,
+        help='Comma/space-separated drift positions for synthetic streams (e.g., "3000,6000")'
+    )
 
     # Detection parameters
     param_group = parser.add_argument_group('Detection Parameters')
     param_group.add_argument(
         '--window-size',
         type=int,
-        default=50,
-        help='Sliding window size (default: 50)'
+        default=300,
+        help='Sliding window size (default: 300)'
+    )
+    param_group.add_argument(
+        '--window-step',
+        type=int,
+        default=1,
+        help='Process every Nth full window to speed up FCA (default: 1 = no skip)'
     )
     param_group.add_argument(
         '--theta',
@@ -795,6 +909,11 @@ Examples:
         type=int,
         default=42,
         help='Random seed for stream generation and deterministic behavior (default: 42)'
+    )
+    param_group.add_argument(
+        '--auto-window-size',
+        action='store_true',
+        help='Auto-set window size based on max_instances (clamped to 300-500)'
     )
     param_group.add_argument(
         '--preprocess-freeze-after',
@@ -853,6 +972,11 @@ Examples:
     )
 
     args = parser.parse_args()
+
+    if args.auto_window_size:
+        args.window_size = _recommended_window_size(args.max_instances)
+
+    args.drift_positions = _parse_drift_positions(args.drift_positions, args.drift_position)
 
     # Validate arguments
     _validate_arguments(args, parser)

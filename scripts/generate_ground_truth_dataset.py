@@ -10,23 +10,23 @@ generate_ground_truth_dataset.py
     python scripts/generate_ground_truth_dataset.py
 
 ВИХІД:
-    ground_truth_500.csv          ← подавай у main.py --custom-file
-    ground_truth_500_labels.json  ← еталонні відповіді для порівняння
+    ground_truth_5000.csv          ← подавай у main.py --custom-file
+    ground_truth_5000_labels.json  ← еталонні відповіді для порівняння
 
 ФОРМАТ CSV (останній стовпець = мітка):
     F1,F2,F3,F4,F5,Label
 
 ВІДОМІ ДРИФТИ (ground truth):
-    - Інстанції 0–149:   Концепт A (стабільний)
-    - Інстанція  150:    РАПТОВИЙ ДРИФТ (sudden)
-    - Інстанції 150–299: Концепт B (стабільний)
-    - Інстанції 300–399: ПОСТУПОВИЙ ДРИФТ (gradual), A→C
-    - Інстанції 400–499: Концепт C (стабільний)
+    - Інстанції 0–1499:   Концепт A (стабільний)
+    - Інстанція  1500:    РАПТОВИЙ ДРИФТ (sudden)
+    - Інстанції 1500–2999: Концепт B (стабільний)
+    - Інстанції 3000–3999: ПОСТУПОВИЙ ДРИФТ (gradual), A→C
+    - Інстанції 4000–4999: Концепт C (стабільний)
 
 ВИКОРИСТАННЯ для верифікації:
     1. python scripts/generate_ground_truth_dataset.py
-    2. python main.py --custom-file ground_truth_500.csv --window-size 50 --theta 0.35
-    3. python verify_results.py experiments/results/.../report_debug.json ground_truth_500_labels.json
+    2. python main.py --custom-file ground_truth_5000.csv --window-size 300 --theta 0.35
+    3. python verify_results.py experiments/results/.../report_debug.json ground_truth_5000_labels.json
 """
 
 import json
@@ -44,11 +44,11 @@ if sys.platform == "win32":
 SEED = 42
 random.seed(SEED)
 
-N = 500
+N = 5000
 N_FEATURES = 5
-SUDDEN_AT = 150       # точна інстанція раптового дрифту
-GRADUAL_START = 300   # початок поступового дрифту
-GRADUAL_END = 400     # кінець поступового дрифту
+SUDDEN_AT = 1500       # точна інстанція раптового дрифту
+GRADUAL_START = 3000   # початок поступового дрифту
+GRADUAL_END = 4000     # кінець поступового дрифту
 
 # ── Концепти (центри розподілів) ──────────────────────────────────────────────
 
@@ -101,16 +101,16 @@ print(f"  - Раптовий дрифт на інстанції {SUDDEN_AT}")
 print(f"  - Поступовий дрифт з інстанції {GRADUAL_START} до {GRADUAL_END}")
 
 all_rows = []
-all_rows += concept_A(SUDDEN_AT)                              # 0–149
-all_rows += concept_B(GRADUAL_START - SUDDEN_AT)              # 150–299
-all_rows += concept_C_gradual(GRADUAL_END - GRADUAL_START)    # 300–399
-all_rows += concept_C_stable(N - GRADUAL_END)                 # 400–499
+all_rows += concept_A(SUDDEN_AT)                              # 0–1499
+all_rows += concept_B(GRADUAL_START - SUDDEN_AT)              # 1500–2999
+all_rows += concept_C_gradual(GRADUAL_END - GRADUAL_START)    # 3000–3999
+all_rows += concept_C_stable(N - GRADUAL_END)                 # 4000–4999
 
 assert len(all_rows) == N, f"Expected {N} rows, got {len(all_rows)}"
 
 # ── Запис CSV ─────────────────────────────────────────────────────────────────
 
-csv_path = Path("ground_truth_500.csv")
+csv_path = Path("ground_truth_5000.csv")
 header = [f"F{i+1}" for i in range(N_FEATURES)] + ["Label"]
 
 with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -125,7 +125,7 @@ print(f"[OK] CSV saved: {csv_path}  ({N} instances, {N_FEATURES} features)")
 ground_truth = {
     "description": "Synthetic dataset with known drift points",
     "total_instances": N,
-    "window_size_recommendation": 50,
+    "window_size_recommendation": 300,
     "concepts": {
         "A": {"range": [0, SUDDEN_AT - 1], "label": 0, "mean": 0.3},
         "B": {"range": [SUDDEN_AT, GRADUAL_START - 1], "label": 1, "mean": 0.8},
@@ -136,28 +136,28 @@ ground_truth = {
         {
             "type": "sudden",
             "true_instance": SUDDEN_AT,
-            "detection_window": [SUDDEN_AT, SUDDEN_AT + 60],
-            "note": "Система з вікном W=50 може виявити на інстанції 150–210"
+            "detection_window": [SUDDEN_AT, SUDDEN_AT + 600],
+            "note": "Система з вікном W=300 може виявити на інстанції 1500–2100"
         },
         {
             "type": "gradual",
             "true_start": GRADUAL_START,
             "true_end": GRADUAL_END,
-            "detection_window": [GRADUAL_START, GRADUAL_END + 50],
+            "detection_window": [GRADUAL_START, GRADUAL_END + 600],
             "note": "Поступовий дрифт — очікуємо кілька детекцій або один тривалий епізод"
         },
     ],
     "how_to_verify": (
-        "1. Запусти: python main.py --custom-file ground_truth_500.csv "
-        "--window-size 50 --theta 0.35 --alpha 2.0\n"
+        "1. Запусти: python main.py --custom-file ground_truth_5000.csv "
+        "--window-size 300 --theta 0.35 --alpha 2.0\n"
         "2. Відкрий report_debug.json в experiments/results/\n"
         "3. Порівняй episodes[*].range з expected_drifts[*].detection_window\n"
-        "4. Раптовий дрифт: хоча б 1 episode в діапазоні [150, 210]\n"
-        "5. Поступовий дрифт: хоча б 1 episode в діапазоні [300, 450]"
+        "4. Раптовий дрифт: хоча б 1 episode в діапазоні [1500, 2100]\n"
+        "5. Поступовий дрифт: хоча б 1 episode в діапазоні [3000, 4600]"
     ),
 }
 
-labels_path = Path("ground_truth_500_labels.json")
+labels_path = Path("ground_truth_5000_labels.json")
 with open(labels_path, "w", encoding="utf-8") as f:
     json.dump(ground_truth, f, indent=2, ensure_ascii=False)
 
@@ -170,7 +170,7 @@ VERIFY_CODE = '''#!/usr/bin/env python3
 verify_results.py — перевіряє чи система знайшла дрифти там де вони є насправді.
 
 ЗАПУСК:
-    python verify_results.py experiments/results/custom_w50_t0.35_a2.0/report_debug.json ground_truth_500_labels.json
+    python verify_results.py experiments/results/custom_w300_t0.35_a2.0/report_debug.json ground_truth_5000_labels.json
 """
 
 import json
@@ -256,23 +256,23 @@ print("="*70)
 print("  КРОК ЗА КРОКОМ — ЯК ПЕРЕВІРИТИ СИСТЕМУ")
 print("="*70)
 print(f"\n1️⃣  Запусти детекцію на еталонному датасеті:")
-print("    python main.py --custom-file ground_truth_500.csv \\")
-print("                    --window-size 50 --theta 0.35 --alpha 2.0")
-print(f"\n2️⃣  Знайди результати в: experiments/results/custom_w50_t0.35_a2.0/report_debug.json")
+print("    python main.py --custom-file ground_truth_5000.csv \\")
+print("                    --window-size 300 --theta 0.35 --alpha 2.0")
+print(f"\n2️⃣  Знайди результати в: experiments/results/custom_w300_t0.35_a2.0/report_debug.json")
 print(f"\n3️⃣  Верифікуй результати:")
 print("    python verify_results.py \\")
-print("        experiments/results/custom_w50_t0.35_a2.0/report_debug.json \\")
-print("        ground_truth_500_labels.json")
+print("        experiments/results/custom_w300_t0.35_a2.0/report_debug.json \\")
+print("        ground_truth_5000_labels.json")
 print()
 print("="*70)
 print("  ОЧІКУВАНІ ДРИФТИ В ДАТАСЕТІ")
 print("="*70)
 print(f"\n🔴 РАПТОВИЙ ДРИФТ (sudden)")
 print(f"   На інстанції: {SUDDEN_AT}")
-print(f"   Система має знайти в діапазоні: [{SUDDEN_AT}, {SUDDEN_AT+60}]")
+print(f"   Система має знайти в діапазоні: [{SUDDEN_AT}, {SUDDEN_AT+600}]")
 print(f"   Тип зміни: Концепт A (μ≈0.3) → Концепт B (μ≈0.8)")
 print(f"\n🟠 ПОСТУПОВИЙ ДРИФТ (gradual)")
 print(f"   На інстанціях: {GRADUAL_START}–{GRADUAL_END}")
-print(f"   Система має знайти в діапазоні: [{GRADUAL_START}, {GRADUAL_END+50}]")
+print(f"   Система має знайти в діапазоні: [{GRADUAL_START}, {GRADUAL_END+600}]")
 print(f"   Тип зміни: Плавний перехід Концепт B (μ≈0.8) → Концепт C (μ≈0.5)")
 print()

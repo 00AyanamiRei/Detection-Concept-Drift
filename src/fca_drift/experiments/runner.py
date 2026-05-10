@@ -31,13 +31,18 @@ class GridSearchRunner:
                       window_size: int,
                       theta: float,
                       alpha: float,
-                      max_instances: int = 1000,
-                      true_drifts: List[int] = None) -> Dict:
+                      max_instances: int = 10000,
+                      true_drifts: List[int] = None,
+                      drift_positions: List[int] = None) -> Dict:
         """
         Run single experiment with given parameters
         """
         # Initialize
-        reader = StreamReader(dataset_name, seed=42)
+        reader_kwargs = {}
+        if dataset_name.lower() in {"agrawal", "sea"}:
+            positions = drift_positions or [max_instances // 2]
+            reader_kwargs["drift_positions"] = positions
+        reader = StreamReader(dataset_name, seed=42, **reader_kwargs)
         stream = StreamWrapper(reader.stream, max_instances=max_instances)
         window = SlidingWindow(size=window_size)
         preprocessor = DataPreprocessor()
@@ -94,8 +99,9 @@ class GridSearchRunner:
                        window_sizes: List[int],
                        thetas: List[float],
                        alphas: List[float],
-                       max_instances: int = 1000,
-                       true_drifts: List[int] = None):
+                       max_instances: int = 10000,
+                       true_drifts: List[int] = None,
+                       drift_positions: List[int] = None):
         """
         Run grid search over parameter space
         """
@@ -117,7 +123,8 @@ class GridSearchRunner:
                     theta=t,
                     alpha=a,
                     max_instances=max_instances,
-                    true_drifts=true_drifts
+                    true_drifts=true_drifts,
+                    drift_positions=drift_positions
                 )
                 print(f"  -> F1: {result['f1_score']:.4f}, Drifts: {result.get('drifts_detected', len(result.get('delays', [])))}")
             except Exception as e:
@@ -156,7 +163,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='Grid Search for FCA Drift Detector')
     parser.add_argument('--dataset', type=str, default='agrawal')
-    parser.add_argument('--max-instances', type=int, default=2000)
+    parser.add_argument('--max-instances', type=int, default=10000)
     parser.add_argument('--output-dir', type=str, default='experiments/results/grid_search')
 
     args = parser.parse_args()
@@ -164,9 +171,13 @@ if __name__ == "__main__":
     runner = GridSearchRunner(output_dir=Path(args.output_dir))
 
     # Define parameter grid
-    window_sizes = [50, 100, 150]
+    window_sizes = [300, 400, 500]
     thetas = [0.3, 0.4, 0.5]
     alphas = [1.5, 2.0, 2.5]
+
+    drift_positions = None
+    if args.dataset.lower() in {"agrawal", "sea"}:
+        drift_positions = [args.max_instances // 2]
 
     # Run grid search
     runner.run_grid_search(
@@ -175,7 +186,8 @@ if __name__ == "__main__":
         thetas=thetas,
         alphas=alphas,
         max_instances=args.max_instances,
-        true_drifts=None  # No ground truth for agrawal by default
+        true_drifts=None,  # No ground truth for agrawal by default
+        drift_positions=drift_positions
     )
 
     # Save results

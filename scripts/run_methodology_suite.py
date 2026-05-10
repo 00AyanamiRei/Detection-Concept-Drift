@@ -72,8 +72,8 @@ def _run_main_case(
     alpha: float = 1.5,
     run_id: str,
     seed: int = 42,
-    merge_gap: int = 25,
-    smoothing_window: int = 5,
+    merge_gap: int = 150,
+    smoothing_window: int = 10,
     dominant_mode: str = "weighted",
     n_features: int = 10,
     max_fca_attrs: int = 15,
@@ -147,17 +147,17 @@ def _write_csv(path: Path, rows: List[Dict[str, Any]], fieldnames: List[str]) ->
 def run_ablation_gradual() -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     configs = [
-        {"label": "baseline_mg25_sw5", "merge_gap": 25, "sw": 5},
-        {"label": "tight_merge_mg5_sw5", "merge_gap": 5, "sw": 5},
-        {"label": "no_smooth_mg25_sw1", "merge_gap": 25, "sw": 1},
-        {"label": "tight_no_smooth_mg5_sw1", "merge_gap": 5, "sw": 1},
+        {"label": "baseline_mg150_sw10", "merge_gap": 150, "sw": 10},
+        {"label": "tight_merge_mg30_sw10", "merge_gap": 30, "sw": 10},
+        {"label": "no_smooth_mg150_sw1", "merge_gap": 150, "sw": 1},
+        {"label": "tight_no_smooth_mg30_sw1", "merge_gap": 30, "sw": 1},
     ]
 
     for cfg in configs:
         run = _run_main_case(
             dataset="elec2",
-            max_instances=4000,
-            window_size=50,
+            max_instances=10000,
+            window_size=300,
             run_id=f"abl_{cfg['label']}",
             seed=42,
             merge_gap=cfg["merge_gap"],
@@ -226,7 +226,7 @@ def _agrawal_localization(debug: Dict[str, Any], drift_point: int = 5000) -> Dic
 def run_multiseed() -> List[Dict[str, Any]]:
     seeds = [21, 42, 84]
     specs = [
-        {"dataset": "elec2", "window_size": 50, "max_instances": 2500},
+        {"dataset": "elec2", "window_size": 300, "max_instances": 5000},
     ]
 
     rows: List[Dict[str, Any]] = []
@@ -239,8 +239,8 @@ def run_multiseed() -> List[Dict[str, Any]]:
                 window_size=spec["window_size"],
                 run_id=f"ms_{spec['dataset']}_s{seed}",
                 seed=seed,
-                merge_gap=25,
-                smoothing_window=5,
+                merge_gap=150,
+                smoothing_window=10,
                 dominant_mode="weighted",
                 n_features=10,
                 max_fca_attrs=15,

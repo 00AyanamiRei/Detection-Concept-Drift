@@ -1,12 +1,12 @@
 # Default configuration
 dataset:
   name: agrawal
-  max_instances: 2000
+  max_instances: 10000
   seed: 42
 
 detector:
   type: fca
-  window_size: 50
+  window_size: 300
   theta: 0.4
   alpha: 2.0
 

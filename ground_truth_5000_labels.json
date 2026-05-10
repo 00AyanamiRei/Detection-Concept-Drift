@@ -1,0 +1,61 @@
+{
+  "description": "Synthetic dataset with known drift points",
+  "total_instances": 5000,
+  "window_size_recommendation": 300,
+  "concepts": {
+    "A": {
+      "range": [
+        0,
+        1499
+      ],
+      "label": 0,
+      "mean": 0.3
+    },
+    "B": {
+      "range": [
+        1500,
+        2999
+      ],
+      "label": 1,
+      "mean": 0.8
+    },
+    "C_gradual": {
+      "range": [
+        3000,
+        3999
+      ],
+      "label": 2,
+      "note": "gradual transition"
+    },
+    "C_stable": {
+      "range": [
+        4000,
+        4999
+      ],
+      "label": 2,
+      "mean": 0.5
+    }
+  },
+  "expected_drifts": [
+    {
+      "type": "sudden",
+      "true_instance": 1500,
+      "detection_window": [
+        1500,
+        2100
+      ],
+      "note": "Система з вікном W=300 може виявити на інстанції 1500–2100"
+    },
+    {
+      "type": "gradual",
+      "true_start": 3000,
+      "true_end": 4000,
+      "detection_window": [
+        3000,
+        4600
+      ],
+      "note": "Поступовий дрифт — очікуємо кілька детекцій або один тривалий епізод"
+    }
+  ],
+  "how_to_verify": "1. Запусти: python main.py --custom-file ground_truth_5000.csv --window-size 300 --theta 0.35 --alpha 2.0\n2. Відкрий report_debug.json в experiments/results/\n3. Порівняй episodes[*].range з expected_drifts[*].detection_window\n4. Раптовий дрифт: хоча б 1 episode в діапазоні [1500, 2100]\n5. Поступовий дрифт: хоча б 1 episode в діапазоні [3000, 4600]"
+}

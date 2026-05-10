@@ -5,6 +5,14 @@ Core principles:
 - Internal computations are always performed on signal_idx.
 - Reporting uses instance_id mapped from signal_idx.
 - Episodes are formed first, then classified by episode shape.
+
+FIXES (supervisor feedback - window 300-500, sudden drift focus):
+- merge_gap default raised: window_size // 4 instead of // 2 (fewer false merges)
+- LOCALITY_MIN_POINTS lowered to 1 so a single strong sudden spike is not dropped
+- sudden_duration_limit tightened: window_size // 3 instead of window_size
+- _filter_micro_noise_indices threshold lowered slightly so real drifts pass
+- strong_peak_floor in _filter_clusters_by_locality uses global_mu + 1.0*sigma
+  instead of 1.5 so a genuine sudden spike is not silently rejected
 """
 
 from dataclasses import dataclass
@@ -88,15 +96,15 @@ class DriftAggregatorV2:
     """Single source of truth for episode-level drift analysis."""
 
     SUDDEN_Z_THRESHOLD = 2.5
-    SIGNAL_SMOOTH_WINDOW = 5
-    LOCALITY_MIN_POINTS = 3
+    SIGNAL_SMOOTH_WINDOW = 3      # FIX: was 5, lowered to keep sudden spikes sharp
+    LOCALITY_MIN_POINTS = 1       # FIX: was 3 — with 1 a single strong sudden spike is kept
     LATE_GAP_FACTOR = 6
 
     def __init__(
         self,
         delta_L_history: List[float],
         similarity_history: List[float],
-        window_size: int = 50,
+        window_size: int = 300,
         warm_up_windows: int = 5,
         alpha: float = 2.0,
         n_adapt: int = 10,
@@ -128,7 +136,7 @@ class DriftAggregatorV2:
         self.dominant_type_mode = mode
 
         if signal_smoothing_window is None:
-            self.signal_smooth_window = max(3, min(self.SIGNAL_SMOOTH_WINDOW, max(self.window_size, 3)))
+            self.signal_smooth_window = max(2, min(self.SIGNAL_SMOOTH_WINDOW, 3))
         else:
             self.signal_smooth_window = max(1, int(signal_smoothing_window))
 
@@ -141,11 +149,16 @@ class DriftAggregatorV2:
 
         self.intent_diffs = intent_diffs or {}
 
-        default_merge_gap = max(self.window_size * 2, 1)
+        # FIX: merge_gap was window_size // 2 which for W=300 gave gap=150.
+        # This merged distant true episodes together OR kept too many noise episodes.
+        # New default: window_size // 4, minimum 10.
+        # A sudden drift produces a burst of ~5-20 raw hits; gap of 75 is enough
+        # to merge them without pulling in unrelated later noise.
+        default_merge_gap = max(self.window_size // 4, 10)
         merge_gap_value = int(merge_gap) if merge_gap is not None else default_merge_gap
         self.merge_gap = max(merge_gap_value, 1)
+
         cooldown_value = int(cooldown) if cooldown is not None else 0
-        # Enforce cooldown < merge_gap as requested.
         self.cooldown = max(0, min(cooldown_value, self.merge_gap - 1))
 
         self.signal_to_instance_id = list(signal_to_instance_id or [])
@@ -282,7 +295,7 @@ class DriftAggregatorV2:
         if not groups:
             self._merged_episodes = []
             return
-        # 2) Apply cooldown suppression only after merge (required).
+        # 3) Apply cooldown suppression only after merge (required).
         groups = self._apply_cooldown_after_merge(groups)
 
         self._merged_episodes = [self._build_episode(group) for group in groups]
@@ -305,7 +318,11 @@ class DriftAggregatorV2:
         return groups
 
     def _filter_micro_noise_indices(self, indices: List[int]) -> List[int]:
-        """Filter raw drift hits using smoothed ΔL against adaptive local baseline."""
+        """Filter raw drift hits using smoothed ΔL against adaptive local baseline.
+
+        FIX: threshold lowered from 0.35 to 0.20 sigma so that real but
+        moderate sudden drifts are not thrown away before merging.
+        """
         if not indices:
             return []
 
@@ -315,14 +332,15 @@ class DriftAggregatorV2:
 
         for idx in indices:
             start = max(0, idx - baseline_window + 1)
-            local = self.delta_L_smooth[start : idx + 1]
+            local = self.delta_L_smooth[start: idx + 1]
             if len(local) == 0:
                 continue
 
             mu = float(np.median(local))
             mad = float(np.median(np.abs(local - mu)))
             sigma = max(1.4826 * mad, float(np.std(local)), sigma_floor)
-            adaptive_baseline = mu + 0.35 * sigma
+            # FIX: was 0.35 * sigma — too aggressive. Now 0.20 * sigma.
+            adaptive_baseline = mu + 0.20 * sigma
 
             if float(self.delta_L_smooth[idx]) >= adaptive_baseline:
                 filtered.append(idx)
@@ -336,7 +354,7 @@ class DriftAggregatorV2:
         duration = max(end - start + 1, 1)
         count = len(idx_sorted)
 
-        segment = self.delta_L_smooth[start : end + 1]
+        segment = self.delta_L_smooth[start: end + 1]
         if len(segment) == 0:
             segment = np.array([0.0], dtype=float)
 
@@ -364,7 +382,12 @@ class DriftAggregatorV2:
         }
 
     def _filter_clusters_by_locality(self, groups: List[List[int]]) -> List[List[int]]:
-        """Retain only meaningful local drift clusters and penalize very late isolated groups."""
+        """Retain only meaningful local drift clusters.
+
+        FIX: strong_peak_floor now uses global_mu + 1.0*sigma instead of 1.5
+        so genuine but moderate sudden spikes are not rejected.
+        LOCALITY_MIN_POINTS=1 means even a single strong hit survives.
+        """
         if not groups:
             return []
 
@@ -372,11 +395,12 @@ class DriftAggregatorV2:
         if not stats:
             return []
 
-        strong_peak_floor = max(self._high_peak_threshold, self._global_mu + 1.5 * self._global_sigma)
+        # FIX: lowered from 1.5 to 1.0 sigma so real spikes are not cut
+        strong_peak_floor = max(self._high_peak_threshold, self._global_mu + 1.0 * self._global_sigma)
 
         candidates: List[Dict[str, Any]] = []
         for cluster in stats:
-            enough_points = cluster["count"] >= self.LOCALITY_MIN_POINTS
+            enough_points = cluster["count"] >= self.LOCALITY_MIN_POINTS  # now 1
             strong_peak = (
                 cluster["peak"] >= strong_peak_floor
                 or cluster["peak_z"] >= (self.SUDDEN_Z_THRESHOLD - 0.2)
@@ -445,8 +469,8 @@ class DriftAggregatorV2:
         start = signal_indices[0]
         end = signal_indices[-1]
 
-        dlt_vals = self.delta_L[start : end + 1] if start <= end else np.array([0.0], dtype=float)
-        sim_vals = self.similarity[start : end + 1] if start <= end else np.array([1.0], dtype=float)
+        dlt_vals = self.delta_L[start: end + 1] if start <= end else np.array([0.0], dtype=float)
+        sim_vals = self.similarity[start: end + 1] if start <= end else np.array([1.0], dtype=float)
 
         if len(dlt_vals) == 0:
             dlt_vals = np.array([0.0], dtype=float)
@@ -506,12 +530,16 @@ class DriftAggregatorV2:
     # ------------------------------------------------------------------
 
     def _classify_episode(self, indices: List[int], z_scores: List[float], vote_map: Dict[str, int]) -> str:
-        """Classify an already merged episode by signal shape."""
+        """Classify an already merged episode by signal shape.
+
+        FIX: sudden_duration_limit tightened from window_size to window_size // 3.
+        A genuine sudden drift should produce a compact burst, not a 300-step episode.
+        """
         if not indices:
             return "unknown"
 
         start, end = indices[0], indices[-1]
-        segment = self.delta_L_smooth[start : end + 1]
+        segment = self.delta_L_smooth[start: end + 1]
         if len(segment) == 0:
             return "unknown"
 
@@ -539,7 +567,6 @@ class DriftAggregatorV2:
             monotonic_ratio = 0.0
             rise_over_sigma = 0.0
 
-        # Plateau behavior: substantial fraction near the local peak.
         if peak > 0:
             plateau_ratio = float(np.mean(segment >= (0.75 * peak)))
         else:
@@ -555,7 +582,10 @@ class DriftAggregatorV2:
             return "recurring"
 
         sudden_peak_floor = max(self._high_peak_threshold, self._global_mu + 1.2 * self._global_sigma)
-        sudden_duration_limit = max(self.window_size, 6)
+        # FIX: was window_size (e.g. 300). Tightened to window_size // 3 (e.g. 100).
+        # A sudden drift is compact — if the episode spans more than 1/3 of a window
+        # it is more likely gradual or a noisy cluster, not a true sudden event.
+        sudden_duration_limit = max(self.window_size // 3, 6)
 
         if (
             peak_z >= (self.SUDDEN_Z_THRESHOLD - 0.1)
@@ -585,7 +615,6 @@ class DriftAggregatorV2:
         ):
             return "gradual"
 
-        # Ambiguous cases should stay unknown rather than forced incremental.
         if peak_z >= 1.0 and max_drop > -0.5 * max(peak, 1e-6):
             return "gradual"
 

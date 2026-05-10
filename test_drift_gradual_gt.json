@@ -1,0 +1,16 @@
+{
+  "description": "Test dataset for gradual drift detection",
+  "drift_type": "gradual",
+  "total_instances": 5000,
+  "window_size_recommendation": 300,
+  "expected_drift": {
+    "type": "gradual",
+    "start": 1500,
+    "duration": 2000,
+    "end": 3499
+  },
+  "expected_detection_window": {
+    "min": 1000,
+    "max": 4000
+  }
+}

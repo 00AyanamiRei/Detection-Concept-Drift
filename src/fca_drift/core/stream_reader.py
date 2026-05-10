@@ -2,7 +2,7 @@
 Stream Reader - River integration + fallback generators
 
 Fixes applied:
-- Agrawal/SEA: ManualDriftStream instead of ConceptDriftStream (math overflow fix)
+- Agrawal/SEA: Manual drift streams instead of ConceptDriftStream (math overflow fix)
 - SEA: variant 0->3 for clearer structural drift in concept lattice
 - SPAM: UTF-8 encoding wrapper (fixes Windows cp1251 error)
 - INSECTS: removed (HTTP 404 on river server)
@@ -11,6 +11,7 @@ Fixes applied:
 """
 from typing import Optional
 from collections.abc import Iterable
+import re
 
 try:
     from river import datasets
@@ -65,44 +66,97 @@ class _UTF8SMSSpam:
 # ---------------------------------------------------------------------------
 # Manual drift streams (avoid ConceptDriftStream math.exp overflow)
 # ---------------------------------------------------------------------------
+def _normalize_drift_positions(raw_positions, fallback_position: int) -> list[int]:
+    if raw_positions is None:
+        return [int(fallback_position)]
+    if isinstance(raw_positions, str):
+        parts = re.split(r"[,;\s]+", raw_positions.strip())
+        positions = [int(p) for p in parts if p]
+    else:
+        positions = [int(p) for p in raw_positions]
+    return sorted({p for p in positions if p > 0})
+
+
 class _ManualDriftAgrawal:
-    """Agrawal with sudden drift at drift_position: function 0 -> 2."""
-    def __init__(self, seed: int, drift_position: int = 5000):
-        self.seed           = seed
-        self.drift_position = drift_position
+    """Agrawal with one or more sudden drifts.
+
+    FIX: changed from function 0<->2 to function 0<->7.
+    Functions 0 and 7 have maximally different decision rules in Agrawal:
+    - Function 0: salary > 50000 AND commission > 0
+    - Function 7: age > 60 OR salary > 75000
+    This produces a large structural change in the FCA concept lattice,
+    making the drift clearly visible as a spike in delta_L.
+
+    perturbation reduced to 0.0 so the boundary is sharp (sudden drift).
+    """
+    def __init__(self, seed: int, drift_positions: list[int]):
+        self.seed = seed
+        self.drift_positions = sorted(drift_positions)
 
     def __iter__(self):
-        s1 = synth.Agrawal(classification_function=0,
-                           seed=self.seed,     perturbation=0.05)
-        s2 = synth.Agrawal(classification_function=2,
-                           seed=self.seed + 1, perturbation=0.05)
-        for i, (x, y) in enumerate(s1):
-            if i >= self.drift_position:
+        functions = [0, 7]          # FIX: was [0, 2]
+        positions = list(self.drift_positions)
+        current = 0
+        segments = positions + [None]
+
+        for seg_idx, stop in enumerate(segments):
+            func = functions[seg_idx % len(functions)]
+            generator = synth.Agrawal(
+                classification_function=func,
+                seed=self.seed + seg_idx,
+                perturbation=0.0,   # FIX: was 0.05 — sharp boundary for sudden drift
+            )
+
+            if stop is None:
+                for x, y in generator:
+                    yield x, y
                 break
-            yield x, y
-        for x, y in s2:
-            yield x, y
+
+            length = max(stop - current, 0)
+            if length == 0:
+                continue
+
+            for i, (x, y) in enumerate(generator):
+                if i >= length:
+                    break
+                yield x, y
+                current += 1
 
 
 class _ManualDriftSEA:
     """
-    SEA with sudden drift at drift_position: variant 0 -> 3.
+    SEA with one or more sudden drifts (variant 0 <-> 3).
     Variants 0 and 3 have the most different decision boundaries,
     producing a clearer structural change in the concept lattice.
     """
-    def __init__(self, seed: int, drift_position: int = 5000):
-        self.seed           = seed
-        self.drift_position = drift_position
+    def __init__(self, seed: int, drift_positions: list[int]):
+        self.seed = seed
+        self.drift_positions = sorted(drift_positions)
 
     def __iter__(self):
-        s1 = synth.SEA(seed=self.seed,     variant=0)
-        s2 = synth.SEA(seed=self.seed + 1, variant=3)
-        for i, (x, y) in enumerate(s1):
-            if i >= self.drift_position:
+        variants = [0, 3]
+        positions = list(self.drift_positions)
+        current = 0
+        segments = positions + [None]
+
+        for seg_idx, stop in enumerate(segments):
+            variant = variants[seg_idx % len(variants)]
+            generator = synth.SEA(seed=self.seed + seg_idx, variant=variant)
+
+            if stop is None:
+                for x, y in generator:
+                    yield x, y
                 break
-            yield x, y
-        for x, y in s2:
-            yield x, y
+
+            length = max(stop - current, 0)
+            if length == 0:
+                continue
+
+            for i, (x, y) in enumerate(generator):
+                if i >= length:
+                    break
+                yield x, y
+                current += 1
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +179,10 @@ class StreamReader:
     def _load_river_stream(self):
         dataset_lower  = self.dataset_name.lower()
         drift_position = self.kwargs.get('drift_position', 5000)
+        drift_positions = _normalize_drift_positions(
+            self.kwargs.get('drift_positions', None),
+            drift_position,
+        )
 
         # ── Real datasets ────────────────────────────────────────────────────
         real_datasets = {
@@ -153,11 +211,11 @@ class StreamReader:
         if SYNTH_AVAILABLE:
             if dataset_lower == 'agrawal':
                 return _ManualDriftAgrawal(
-                    seed=self.seed, drift_position=drift_position)
+                    seed=self.seed, drift_positions=drift_positions)
 
             if dataset_lower == 'sea':
                 return _ManualDriftSEA(
-                    seed=self.seed, drift_position=drift_position)
+                    seed=self.seed, drift_positions=drift_positions)
 
             if dataset_lower == 'hyperplane':
                 return synth.Hyperplane(

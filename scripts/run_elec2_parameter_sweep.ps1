@@ -1,28 +1,27 @@
 param(
     [string]$PythonExe = "e:/bcpraca/study/prototype/project/.venv/Scripts/python.exe",
-    [int]$MaxInstances = 2000,
+    [int]$MaxInstances = 20000,
     [int]$Seed = 42,
-    [string]$OutputRoot = "experiments/results_wta_elec2_n2000",
-    [string]$ReportPath = "experiments/results_wta_elec2_n2000/elec2_parameter_sweep_complete.txt"
+    [string]$OutputRoot = "experiments/results_wta_elec2_n20000",
+    [string]$ReportPath = "experiments/results_wta_elec2_n20000/elec2_parameter_sweep_complete.txt"
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $tests = @(
-    @{ id = "base"; ws = 50; th = 0.5; al = 1.5 },
-    @{ id = "w30"; ws = 30; th = 0.5; al = 1.5 },
-    @{ id = "w50"; ws = 50; th = 0.5; al = 1.5 },
-    @{ id = "w80"; ws = 80; th = 0.5; al = 1.5 },
-    @{ id = "w120"; ws = 120; th = 0.5; al = 1.5 },
-    @{ id = "t03"; ws = 50; th = 0.3; al = 1.5 },
-    @{ id = "t05"; ws = 50; th = 0.5; al = 1.5 },
-    @{ id = "t07"; ws = 50; th = 0.7; al = 1.5 },
-    @{ id = "t085"; ws = 50; th = 0.85; al = 1.5 },
-    @{ id = "a08"; ws = 50; th = 0.5; al = 0.8 },
-    @{ id = "a12"; ws = 50; th = 0.5; al = 1.2 },
-    @{ id = "a15"; ws = 50; th = 0.5; al = 1.5 },
-    @{ id = "a25"; ws = 50; th = 0.5; al = 2.5 }
+    @{ id = "base"; ws = 300; th = 0.5; al = 1.5 },
+    @{ id = "w300"; ws = 300; th = 0.5; al = 1.5 },
+    @{ id = "w400"; ws = 400; th = 0.5; al = 1.5 },
+    @{ id = "w500"; ws = 500; th = 0.5; al = 1.5 },
+    @{ id = "t03"; ws = 300; th = 0.3; al = 1.5 },
+    @{ id = "t05"; ws = 300; th = 0.5; al = 1.5 },
+    @{ id = "t07"; ws = 300; th = 0.7; al = 1.5 },
+    @{ id = "t085"; ws = 300; th = 0.85; al = 1.5 },
+    @{ id = "a08"; ws = 300; th = 0.5; al = 0.8 },
+    @{ id = "a12"; ws = 300; th = 0.5; al = 1.2 },
+    @{ id = "a15"; ws = 300; th = 0.5; al = 1.5 },
+    @{ id = "a25"; ws = 300; th = 0.5; al = 2.5 }
 )
 
 if (-not (Test-Path $PythonExe)) {

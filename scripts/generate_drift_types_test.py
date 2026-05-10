@@ -23,6 +23,13 @@ SEED = 42
 random.seed(SEED)
 
 N_FEATURES = 5
+TOTAL_INSTANCES = 5000
+SUDDEN_POINT = 2000
+SUDDEN_DURATION = 20
+GRADUAL_START = 1500
+GRADUAL_DURATION = 2000
+INCREMENTAL_START = 1500
+INCREMENTAL_DURATION = 2000
 
 
 # ═════════════════════════════════════ SUDDEN DRIFT ════════════════════════════════
@@ -31,28 +38,28 @@ def generate_sudden_drift():
     """
     РАПТОВИЙ ДРЕЙФ: різка ізольована зміна
 
-    Інстанції  0–99:   Стабільна концепція (mean=0.3)
-    Інстанція 100–105: ⚡ РАПТОВИЙ ДРЕЙФ (mean=0.9) — 6 точок, потім назад
-    Інстанції 106–199: Вертаємось до норми (mean=0.3)
+    Інстанції 0–1999:   Стабільна концепція (mean=0.3)
+    Інстанції 2000–2019: ⚡ РАПТОВИЙ ДРЕЙФ (mean=0.9) — 20 точок, потім назад
+    Інстанції 2020–4999: Вертаємось до норми (mean=0.3)
     """
     rows = []
 
     # До дрейфу
-    for i in range(100):
+    for i in range(SUDDEN_POINT):
         row = [round(random.gauss(0.3, 0.05), 3) for _ in range(N_FEATURES)]
         rows.append(row + [0])
 
     # ⚡ Раптова зміна (6 точок на піку)
-    for i in range(6):
+    for i in range(SUDDEN_DURATION):
         row = [round(random.gauss(0.9, 0.05), 3) for _ in range(N_FEATURES)]
         rows.append(row + [1])
 
     # Повернення до норми
-    for i in range(94):
+    for i in range(TOTAL_INSTANCES - SUDDEN_POINT - SUDDEN_DURATION):
         row = [round(random.gauss(0.3, 0.05), 3) for _ in range(N_FEATURES)]
         rows.append(row + [0])
 
-    assert len(rows) == 200
+    assert len(rows) == TOTAL_INSTANCES
     return rows
 
 
@@ -60,30 +67,30 @@ def generate_gradual_drift():
     """
     ПОСТУПОВИЙ ДРЕЙФ: повільна, але стійка зміна
 
-    Інстанції 0–49:    Стабільна концепція (mean=0.2)
-    Інстанції 50–149:  🌊 ПОСТУПОВИЙ дрейф (лінійна зміна 0.2→0.8)
-    Інстанції 150–199: Нова концепція (mean=0.8)
+    Інстанції 0–1499:    Стабільна концепція (mean=0.2)
+    Інстанції 1500–3499:  🌊 ПОСТУПОВИЙ дрейф (лінійна зміна 0.2→0.8)
+    Інстанції 3500–4999: Нова концепція (mean=0.8)
     """
     rows = []
 
     # До дрейфу
-    for i in range(50):
+    for i in range(GRADUAL_START):
         row = [round(random.gauss(0.2, 0.05), 3) for _ in range(N_FEATURES)]
         rows.append(row + [0])
 
-    # 🌊 Поступовий дрейф (100 інстанцій переходу)
-    for i in range(100):
-        t = i / 100  # 0.0 → 1.0
+    # 🌊 Поступовий дрейф (2000 інстанцій переходу)
+    for i in range(GRADUAL_DURATION):
+        t = i / GRADUAL_DURATION  # 0.0 → 1.0
         mean = 0.2 * (1 - t) + 0.8 * t  # лінійна інтерполяція
         row = [round(random.gauss(mean, 0.05), 3) for _ in range(N_FEATURES)]
         rows.append(row + [1])
 
     # Після дрейфу
-    for i in range(50):
+    for i in range(TOTAL_INSTANCES - GRADUAL_START - GRADUAL_DURATION):
         row = [round(random.gauss(0.8, 0.05), 3) for _ in range(N_FEATURES)]
         rows.append(row + [1])
 
-    assert len(rows) == 200
+    assert len(rows) == TOTAL_INSTANCES
     return rows
 
 
@@ -91,34 +98,34 @@ def generate_incremental_drift():
     """
     ІНКРЕМЕНТАЛЬНИЙ ДРЕЙФ: повільне МОНОТОННЕ нарощування
 
-    Інстанції 0–49:    Стабільна концепція (mean=0.2)
-    Інстанції 50–149:  📈 ІНКРЕМЕНТАЛЬНИЙ дрейф (step +0.006 за інстанцію)
-    Інстанції 150–199: Нова концепція (mean=0.8)
+    Інстанції 0–1499:    Стабільна концепція (mean=0.2)
+    Інстанції 1500–3499:  📈 ІНКРЕМЕНТАЛЬНИЙ дрейф (step +0.0003 за інстанцію)
+    Інстанції 3500–4999: Нова концепція (mean=0.8)
 
     Особливість: ≥70% кроків мають бути позитивні (монотонні)
     """
     rows = []
 
     # До дрейфу
-    for i in range(50):
+    for i in range(INCREMENTAL_START):
         row = [round(random.gauss(0.2, 0.05), 3) for _ in range(N_FEATURES)]
         rows.append(row + [0])
 
-    # 📈 Інкрементальний дрейф (100 інстанцій, step за step)
+    # 📈 Інкрементальний дрейф (2000 інстанцій, step за step)
     current_mean = 0.2
-    for i in range(100):
-        # Позитивний крок: mean += 0.006 (總 +0.6 за 100 кроків = 0.2 → 0.8)
-        current_mean += 0.006 + random.gauss(0, 0.01)  # трохи шуму
+    for i in range(INCREMENTAL_DURATION):
+        # Позитивний крок: mean += 0.0003 (~+0.6 за 2000 кроків = 0.2 → 0.8)
+        current_mean += 0.0003 + random.gauss(0, 0.01)  # трохи шуму
         current_mean = max(0.2, min(0.8, current_mean))  # clip
         row = [round(random.gauss(current_mean, 0.05), 3) for _ in range(N_FEATURES)]
         rows.append(row + [1])
 
     # Після дрейфу
-    for i in range(50):
+    for i in range(TOTAL_INSTANCES - INCREMENTAL_START - INCREMENTAL_DURATION):
         row = [round(random.gauss(0.8, 0.05), 3) for _ in range(N_FEATURES)]
         rows.append(row + [1])
 
-    assert len(rows) == 200
+    assert len(rows) == TOTAL_INSTANCES
     return rows
 
 
@@ -142,8 +149,8 @@ def write_ground_truth(filename, drift_type, position, duration):
     gt = {
         "description": f"Test dataset for {drift_type} drift detection",
         "drift_type": drift_type,
-        "total_instances": 200,
-        "window_size_recommendation": 30,
+        "total_instances": TOTAL_INSTANCES,
+        "window_size_recommendation": 300,
         "expected_drift": {
             "type": drift_type,
             "start": position,
@@ -151,8 +158,8 @@ def write_ground_truth(filename, drift_type, position, duration):
             "end": position + duration - 1
         },
         "expected_detection_window": {
-            "min": max(0, position - 20),
-            "max": min(200, position + duration + 20)
+            "min": max(0, position - 500),
+            "max": min(TOTAL_INSTANCES, position + duration + 500)
         }
     }
 
@@ -169,17 +176,17 @@ print("""
 # ⚡ SUDDEN
 rows_sudden = generate_sudden_drift()
 write_csv("test_drift_sudden.csv", rows_sudden, "🚨 SUDDEN (раптовий) дрейф")
-write_ground_truth("test_drift_sudden_gt.json", "sudden", 100, 6)
+write_ground_truth("test_drift_sudden_gt.json", "sudden", SUDDEN_POINT, SUDDEN_DURATION)
 
 # 🌊 GRADUAL
 rows_gradual = generate_gradual_drift()
 write_csv("test_drift_gradual.csv", rows_gradual, "🌊 GRADUAL (поступовий) дрейф")
-write_ground_truth("test_drift_gradual_gt.json", "gradual", 50, 100)
+write_ground_truth("test_drift_gradual_gt.json", "gradual", GRADUAL_START, GRADUAL_DURATION)
 
 # 📈 INCREMENTAL
 rows_incremental = generate_incremental_drift()
 write_csv("test_drift_incremental.csv", rows_incremental, "📈 INCREMENTAL (інкрементальний) дрейф")
-write_ground_truth("test_drift_incremental_gt.json", "incremental", 50, 100)
+write_ground_truth("test_drift_incremental_gt.json", "incremental", INCREMENTAL_START, INCREMENTAL_DURATION)
 
 print("""
 ╔════════════════════════════════════════════════════════════════╗
@@ -187,15 +194,15 @@ print("""
 ╚════════════════════════════════════════════════════════════════╝
 
 🚨 РАПТОВИЙ дрейф:
-   python main.py --custom-file test_drift_sudden.csv \\
-     --window-size 30 --theta 0.4 --language en
+     python main.py --custom-file test_drift_sudden.csv \\
+         --window-size 300 --theta 0.4 --language en
 
 🌊 ПОСТУПОВИЙ дрейф:
-   python main.py --custom-file test_drift_gradual.csv \\
-     --window-size 30 --theta 0.35 --language en
+     python main.py --custom-file test_drift_gradual.csv \\
+         --window-size 300 --theta 0.35 --language en
 
 📈 ІНКРЕМЕНТАЛЬНИЙ дрейф:
-   python main.py --custom-file test_drift_incremental.csv \\
-     --window-size 30 --theta 0.3 --language en
+     python main.py --custom-file test_drift_incremental.csv \\
+         --window-size 300 --theta 0.3 --language en
 
 """)

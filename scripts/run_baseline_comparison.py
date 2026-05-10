@@ -60,7 +60,10 @@ def _sanitize_features(x: Dict) -> Dict[str, float]:
 
 def _run_error_based_detector(dataset: str, max_instances: int, method: str) -> Dict[str, float]:
     """Run one supervised error-based drift detector on a stream."""
-    reader = StreamReader(dataset, seed=42)
+    reader_kwargs = {}
+    if dataset.lower() in {"agrawal", "sea"}:
+        reader_kwargs["drift_positions"] = [max_instances // 2]
+    reader = StreamReader(dataset, seed=42, **reader_kwargs)
     stream = StreamWrapper(reader.stream, max_instances=max_instances)
 
     model = GaussianNB()
@@ -151,15 +154,15 @@ def run_comparison(output_csv: Path) -> List[Dict[str, float]]:
     """Run all baseline comparisons and merge with FCA records."""
     # Datasets aligned with currently available FCA results in experiments/results.
     dataset_specs = [
-        {"dataset": "agrawal", "max_instances": 20000, "window_size": 50},
-        {"dataset": "elec2", "max_instances": 20000, "window_size": 50},
-        {"dataset": "elec2", "max_instances": 20000, "window_size": 100},
-        {"dataset": "phishing", "max_instances": 20000, "window_size": 50},
-        {"dataset": "keystroke", "max_instances": 20000, "window_size": 50},
-        {"dataset": "bikes", "max_instances": 20000, "window_size": 50},
-        {"dataset": "http", "max_instances": 20000, "window_size": 50},
-        {"dataset": "water_flow", "max_instances": 20000, "window_size": 50},
-        {"dataset": "hyperplane", "max_instances": 20000, "window_size": 50},
+        {"dataset": "agrawal", "max_instances": 20000, "window_size": 300},
+        {"dataset": "elec2", "max_instances": 20000, "window_size": 300},
+        {"dataset": "elec2", "max_instances": 20000, "window_size": 500},
+        {"dataset": "phishing", "max_instances": 20000, "window_size": 300},
+        {"dataset": "keystroke", "max_instances": 20000, "window_size": 300},
+        {"dataset": "bikes", "max_instances": 20000, "window_size": 300},
+        {"dataset": "http", "max_instances": 20000, "window_size": 300},
+        {"dataset": "water_flow", "max_instances": 20000, "window_size": 300},
+        {"dataset": "hyperplane", "max_instances": 20000, "window_size": 300},
     ]
 
     rows: List[Dict[str, float]] = []
