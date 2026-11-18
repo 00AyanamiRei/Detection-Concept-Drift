@@ -2,7 +2,8 @@
 """Run baseline detector comparison (ADWIN, DDM, EDDM) and merge with FCA results.
 
 This script is intended to generate inputs for thesis section 4.4.
-It expects FCA runs already present in experiments/results/*_w*_t0.5_a1.5/results.json.
+It expects FCA runs already present in experiments/results with matching
+dataset/window-size and the lookup parameters defined below.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import sys
 import time
 import datetime as dt
@@ -22,10 +24,34 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from river.naive_bayes import GaussianNB
+from river.drift import ADWIN
+from river.drift import binary as river_binary
 
 from fca_drift.core import StreamReader, StreamWrapper
-from fca_drift.detection import DDM, EDDM
-from fca_drift.detection.adwin_detector import ADWINDetector
+
+
+FCA_LOOKUP_DEFAULTS = {
+    "theta": 0.5,
+    "alpha": 1.5,
+    "merge_gap": None,
+}
+
+FCA_LOOKUP_BY_DATASET = {
+    "elec2": {"theta": 0.3, "alpha": 2.0, "merge_gap": 20},
+    "http": {"theta": 0.3, "alpha": 2.0, "merge_gap": 60},
+}
+
+
+def _fmt_param(value: float) -> str:
+    if isinstance(value, float) and value.is_integer():
+        return f"{value:.1f}"
+    return f"{value}"
+
+
+def _get_fca_lookup_params(dataset: str) -> Dict[str, float]:
+    params = dict(FCA_LOOKUP_DEFAULTS)
+    params.update(FCA_LOOKUP_BY_DATASET.get(dataset.lower(), {}))
+    return params
 
 
 def _stable_hash_to_float(value: str) -> float:
@@ -68,14 +94,15 @@ def _run_error_based_detector(dataset: str, max_instances: int, method: str) -> 
 
     model = GaussianNB()
     if method == "adwin":
-        detector = ADWINDetector(delta=0.002)
+        detector = ADWIN(delta=0.002)
     elif method == "ddm":
-        detector = DDM(min_instances=30, warning_level=2.0, drift_level=3.0)
+        detector = river_binary.DDM(warm_start=30, warning_threshold=2.0, drift_threshold=3.0)
     elif method == "eddm":
-        detector = EDDM(min_instances=30, warning_level=0.95, drift_level=0.90)
+        detector = river_binary.EDDM(warm_start=30, alpha=0.95, beta=0.90)
     else:
         raise ValueError(f"Unknown method: {method}")
 
+    drift_indices = []
     start = time.perf_counter()
     instance_count = 0
 
@@ -88,9 +115,13 @@ def _run_error_based_detector(dataset: str, max_instances: int, method: str) -> 
         if y_pred is not None:
             error = float(y_pred != y)
             if method == "adwin":
-                detector.update(error, idx)
+                detector.update(error)
+                if detector.drift_detected:
+                    drift_indices.append(idx)
             else:
-                detector.update(bool(error), idx)
+                detector.update(1 if error else 0)
+                if detector.drift_detected:
+                    drift_indices.append(idx)
 
         model.learn_one(x_num, y)
 
@@ -98,37 +129,64 @@ def _run_error_based_detector(dataset: str, max_instances: int, method: str) -> 
 
     return {
         "instances": instance_count,
-        "raw_alarms": len(detector.drift_indices),
+        "raw_alarms": len(drift_indices),
         "runtime_sec": elapsed,
     }
 
 
 def _load_fca_result(dataset: str, window_size: int, max_instances: int) -> Dict[str, float]:
-    """Load FCA result JSON if present.
+    """Load FCA result JSON using dataset-specific lookup parameters."""
+    lookup = _get_fca_lookup_params(dataset)
+    theta = lookup["theta"]
+    alpha = lookup["alpha"]
+    merge_gap = lookup.get("merge_gap")
 
-    Supports both legacy run directory naming and the current collision-safe naming
-    that includes max instances.
-    """
-    candidates = [
-        (
-            PROJECT_ROOT
-            / "experiments"
-            / "results"
-            / f"{dataset}_n{max_instances}_w{window_size}_t0.5_a1.5"
-            / "results.json"
-        ),
-        (
-            PROJECT_ROOT
-            / "experiments"
-            / "results"
-            / f"{dataset}_w{window_size}_t0.5_a1.5"
-            / "results.json"
-        ),
+    results_root = PROJECT_ROOT / "experiments" / "results"
+    t_str = _fmt_param(theta)
+    a_str = _fmt_param(alpha)
+
+    patterns = [
+        f"{dataset}_n*_w{window_size}_t{t_str}_a{a_str}*",
+        f"{dataset}_w{window_size}_t{t_str}_a{a_str}*",
     ]
 
-    result_path = next((p for p in candidates if p.exists()), None)
+    candidate_dirs = []
+    for pat in patterns:
+        candidate_dirs.extend([p for p in results_root.rglob(pat) if p.is_dir()])
 
-    if result_path is None:
+    def pick_best(strict_merge_gap: bool) -> Dict[str, float] | None:
+        scored = []
+        for run_dir in candidate_dirs:
+            result_path = run_dir / "results.json"
+            if not result_path.exists():
+                continue
+            try:
+                data = json.loads(result_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+
+            params = data.get("parameters", {}) or {}
+            if strict_merge_gap and merge_gap is not None:
+                if params.get("merge_gap") is None:
+                    continue
+                if int(params.get("merge_gap")) != int(merge_gap):
+                    continue
+
+            run_max_instances = params.get("max_instances")
+            max_match = int(run_max_instances) == int(max_instances) if run_max_instances is not None else False
+            scored.append((max_match, run_dir.stat().st_mtime, data))
+
+        if not scored:
+            return None
+
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return scored[0][2]
+
+    data = pick_best(strict_merge_gap=True)
+    if data is None and merge_gap is not None:
+        data = pick_best(strict_merge_gap=False)
+
+    if data is None:
         return {
             "fca_instances": 0,
             "fca_raw": 0,
@@ -136,9 +194,6 @@ def _load_fca_result(dataset: str, window_size: int, max_instances: int) -> Dict
             "fca_episode_rate_pct": 0.0,
             "fca_max_delta_L": 0.0,
         }
-
-    with open(result_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
 
     det = data.get("detection_results", {})
     return {
@@ -155,12 +210,12 @@ def run_comparison(output_csv: Path) -> List[Dict[str, float]]:
     # Datasets aligned with currently available FCA results in experiments/results.
     dataset_specs = [
         {"dataset": "agrawal", "max_instances": 20000, "window_size": 300},
-        {"dataset": "elec2", "max_instances": 20000, "window_size": 300},
-        {"dataset": "elec2", "max_instances": 20000, "window_size": 500},
+        {"dataset": "elec2", "max_instances": 10000, "window_size": 300},
+        {"dataset": "elec2", "max_instances": 10000, "window_size": 500},
         {"dataset": "phishing", "max_instances": 20000, "window_size": 300},
         {"dataset": "keystroke", "max_instances": 20000, "window_size": 300},
         {"dataset": "bikes", "max_instances": 20000, "window_size": 300},
-        {"dataset": "http", "max_instances": 20000, "window_size": 300},
+        {"dataset": "http", "max_instances": 10000, "window_size": 300},
         {"dataset": "water_flow", "max_instances": 20000, "window_size": 300},
         {"dataset": "hyperplane", "max_instances": 20000, "window_size": 300},
     ]

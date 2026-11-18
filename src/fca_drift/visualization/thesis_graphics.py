@@ -174,12 +174,17 @@ def compute_rolling_threshold(delta_L_history: List[float],
 
 def apply_warmup(drift_indices: List[int],
                 warm_up_windows: int,
-                window_size: int) -> List[int]:
+                window_size: int,
+                warm_up_instances: Optional[int] = None) -> List[int]:
     """Remove drifts detected during warm-up period."""
-    if warm_up_windows == 0:
+    if warm_up_windows == 0 and warm_up_instances is None:
         return drift_indices
 
-    warm_up_threshold = warm_up_windows * window_size
+    if warm_up_instances is not None:
+        warm_up_threshold = max(0, int(warm_up_instances))
+    else:
+        # drift_indices are signal indices (window-level), so use warm_up_windows directly
+        warm_up_threshold = max(0, int(warm_up_windows))
     return [idx for idx in drift_indices if idx >= warm_up_threshold]
 
 
@@ -274,6 +279,31 @@ class ThesisGraphicsExporter:
                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.85,
                         edgecolor='darkblue', linewidth=1.5))
 
+    @staticmethod
+    def _resolve_instances(series_length: int, params: Optional[Dict]) -> List[int]:
+        """Return X-axis coordinates aligned to the signal history."""
+        if series_length <= 0:
+            return []
+        if params:
+            mapping = params.get('signal_to_instance_id')
+            if isinstance(mapping, list) and len(mapping) >= series_length:
+                return list(mapping[:series_length])
+            window_step = max(1, int(params.get('window_step', 1)))
+        else:
+            window_step = 1
+        return [i * window_step for i in range(series_length)]
+
+    @staticmethod
+    def _signal_to_instance(signal_idx: int, instances: List[int]) -> int:
+        """Map signal index to instance coordinate using resolved X-axis."""
+        if not instances:
+            return signal_idx
+        if signal_idx < 0:
+            return instances[0]
+        if signal_idx < len(instances):
+            return instances[signal_idx]
+        return instances[-1]
+
     def export_delta_L_analysis(self,
                                delta_L_history: List[float],
                                drift_indices: List[int],
@@ -294,16 +324,26 @@ class ThesisGraphicsExporter:
         - Warm-up period shaded background
         """
         fig, ax = plt.subplots(figsize=(16, 8), dpi=self.dpi)
-        instances = list(range(len(delta_L_history)))
+        instances = self._resolve_instances(len(delta_L_history), params)
 
         colors = THESIS_STYLE['colors_cb']
         accents = THESIS_STYLE['colors_accents']
 
         # ===== WARM-UP ZONE =====
+        # FIX: cap warmup_end at signal length (window_step>1 shrinks the signal)
         if warm_up_windows > 0:
-            warmup_end = warm_up_windows * window_size
-            ax.axvspan(0, warmup_end, alpha=0.1, color='gray',
-                      label='Warm-up Period', hatch='///', linewidth=0)
+            warm_up_instances = params.get('warm_up_instances') if params else None
+            if instances:
+                if warm_up_instances is not None:
+                    warmup_idx = min(max(0, int(warm_up_instances)), len(instances) - 1)
+                else:
+                    warmup_idx = min(max(0, int(warm_up_windows)), len(instances) - 1)
+                warmup_end = instances[warmup_idx]
+            else:
+                warmup_end = warm_up_instances if warm_up_instances is not None else warm_up_windows
+            if warmup_end > 0:
+                ax.axvspan(0, warmup_end, alpha=0.1, color='gray',
+                          label='Warm-up Period', hatch='///', linewidth=0)
 
         # ===== RAW ΔLₜ =====
         ax.plot(instances, delta_L_history, 'b-', linewidth=0.6, alpha=0.3,
@@ -333,10 +373,12 @@ class ThesisGraphicsExporter:
         # ===== MERGED EPISODES (colored regions) =====
         for start, end, dtype in merged_episodes:
             color = colors.get(dtype, colors['unknown'])
-            ax.axvspan(start, end, alpha=0.2, facecolor=color, edgecolor=color,
+            start_x = self._signal_to_instance(start, instances)
+            end_x = self._signal_to_instance(end, instances)
+            ax.axvspan(start_x, end_x, alpha=0.2, facecolor=color, edgecolor=color,
                       linewidth=1.5, linestyle='-', zorder=1)
             # Label at midpoint
-            mid = (start + end) / 2
+            mid = (start_x + end_x) / 2
             max_val = max(delta_L_history) if delta_L_history else 1
             ax.text(mid, max_val * 1.08, dtype.upper(), ha='center', fontsize=8,
                    fontweight='bold', color=color, zorder=4)
@@ -346,7 +388,8 @@ class ThesisGraphicsExporter:
             if drift_idx < len(delta_L_history):
                 dtype = drift_types.get(drift_idx, 'unknown')
                 color = colors.get(dtype, colors['unknown'])
-                ax.plot(drift_idx, delta_L_history[drift_idx], marker='v',
+                drift_x = self._signal_to_instance(drift_idx, instances)
+                ax.plot(drift_x, delta_L_history[drift_idx], marker='v',
                        markersize=10, color=color, alpha=0.8, markeredgecolor='black',
                        markeredgewidth=0.5, zorder=5)
 
@@ -371,7 +414,8 @@ class ThesisGraphicsExporter:
                linestyle=THESIS_STYLE['grid']['linestyle'],
                linewidth=THESIS_STYLE['grid']['linewidth'])
         ax.grid(True, which='minor', alpha=0.1, linestyle=':', linewidth=0.5)
-        ax.set_xlim(0, len(delta_L_history)-1 if delta_L_history else 1)
+        x_max = instances[-1] if instances else 1
+        ax.set_xlim(0, x_max)
         y_max = max(delta_L_history) if delta_L_history else 1.0
         if y_max <= 0:
             y_max = 1e-3
@@ -406,7 +450,7 @@ class ThesisGraphicsExporter:
         - Correlation with ΔLₜ (if provided)
         """
         fig, ax = plt.subplots(figsize=(14, 6), dpi=self.dpi)
-        instances = list(range(len(similarity_history)))
+        instances = self._resolve_instances(len(similarity_history), params)
 
         colors = THESIS_STYLE['colors_cb']
         mean_sim = np.mean(similarity_history)
@@ -439,7 +483,8 @@ class ThesisGraphicsExporter:
             drift_sims = [similarity_history[i] for i in drift_indices
                          if i < len(similarity_history)]
             valid_drift_idx = [i for i in drift_indices if i < len(similarity_history)]
-            ax.scatter(valid_drift_idx, drift_sims, marker='X', s=120,
+            drift_x = [self._signal_to_instance(i, instances) for i in valid_drift_idx]
+            ax.scatter(drift_x, drift_sims, marker='X', s=120,
                       color='red', linewidth=2.5, edgecolors='darkred',
                       label='Detected Drift Points', zorder=5)
 
@@ -501,6 +546,10 @@ class ThesisGraphicsExporter:
         fig = plt.figure(figsize=(16, 10), dpi=self.dpi)
         gs = fig.add_gridspec(3, 2, height_ratios=[1.5, 1.5, 0.8], hspace=0.4, wspace=0.3)
 
+        instances = self._resolve_instances(total_instances, params)
+        if instances:
+            total_instances = max(total_instances, instances[-1] + 1)
+
         colors = THESIS_STYLE['colors_cb']
 
         # ===== PANEL 1: PIE CHART =====
@@ -552,8 +601,12 @@ class ThesisGraphicsExporter:
         ax_hist = fig.add_subplot(gs[0, 1])
 
         if drift_indices:
+            drift_positions = [
+                self._signal_to_instance(i, instances) for i in drift_indices
+                if i < len(instances)
+            ] if instances else list(drift_indices)
             n_bins = min(30, len(drift_indices)//2 + 1)
-            counts, bins, patches = ax_hist.hist(drift_indices, bins=n_bins,
+            counts, bins, patches = ax_hist.hist(drift_positions, bins=n_bins,
                                                 color='#3498db', alpha=0.6,
                                                 edgecolor='black', linewidth=0.8,
                                                 label='Drift Count')
@@ -561,7 +614,7 @@ class ThesisGraphicsExporter:
             # KDE overlay
             if len(drift_indices) > 3:
                 try:
-                    kde = gaussian_kde(drift_indices, bw_method=0.2)
+                    kde = gaussian_kde(drift_positions, bw_method=0.2)
                     x_range = np.linspace(0, total_instances, 300)
                     kde_vals = kde(x_range)
                     max_count = counts.max() if len(counts) > 0 else 1
@@ -587,10 +640,17 @@ class ThesisGraphicsExporter:
         for region_idx in range(n_regions):
             start = region_idx * region_size
             end = (region_idx + 1) * region_size if region_idx < n_regions - 1 else total_instances
-            region_indices = [i for i in drift_indices if start <= i < end]
+            if instances:
+                region_indices = [
+                    (self._signal_to_instance(i, instances), drift_types.get(i, 'unknown'))
+                    for i in drift_indices
+                    if i < len(instances)
+                ]
+            else:
+                region_indices = [(i, drift_types.get(i, 'unknown')) for i in drift_indices]
 
             for dtype in types_list:
-                count = sum(1 for i in region_indices if drift_types.get(i) == dtype)
+                count = sum(1 for i, t in region_indices if start <= i < end and t == dtype)
                 region_data[dtype].append(count)
 
         x_pos = np.arange(n_regions)
@@ -675,7 +735,7 @@ class ThesisGraphicsExporter:
         Shares X-axis for direct comparison.
         """
         fig, axes = plt.subplots(2, 1, figsize=(16, 10), dpi=self.dpi, sharex=True)
-        instances = list(range(len(similarity_history)))
+        instances = self._resolve_instances(len(similarity_history), params)
 
         colors = THESIS_STYLE['colors_cb']
         accents = THESIS_STYLE['colors_accents']
@@ -701,7 +761,8 @@ class ThesisGraphicsExporter:
         if drift_indices:
             drift_sims = [similarity_history[i] for i in drift_indices if i < len(similarity_history)]
             valid_idx = [i for i in drift_indices if i < len(similarity_history)]
-            axes[0].scatter(valid_idx, drift_sims, marker='X', s=100, color='red',
+            drift_x = [self._signal_to_instance(i, instances) for i in valid_idx]
+            axes[0].scatter(drift_x, drift_sims, marker='X', s=100, color='red',
                            linewidth=2, edgecolors='darkred', zorder=5)
 
         axes[0].set_ylabel('Similarity Score', fontsize=11, fontweight='bold')
@@ -743,7 +804,8 @@ class ThesisGraphicsExporter:
         if drift_indices:
             drift_delta = [delta_L_history[i] for i in drift_indices if i < len(delta_L_history)]
             valid_idx = [i for i in drift_indices if i < len(delta_L_history)]
-            axes[1].scatter(valid_idx, drift_delta, marker='X', s=100, color='red',
+            drift_x = [self._signal_to_instance(i, instances) for i in valid_idx]
+            axes[1].scatter(drift_x, drift_delta, marker='X', s=100, color='red',
                            linewidth=2, edgecolors='darkred', zorder=5)
 
         axes[1].set_xlabel('Instance Number (t)', fontsize=11, fontweight='bold')
@@ -775,12 +837,16 @@ class ThesisGraphicsExporter:
                   warm_up_windows: int,
                   merge_gap: int,
                   seed: int,
-                  merged_episodes: Optional[List[Tuple[int, int, str]]] = None) -> Dict[str, Path]:
+                  merged_episodes: Optional[List[Tuple[int, int, str]]] = None,
+                  window_step: int = 1,
+                  warm_up_instances: Optional[int] = None,
+                  signal_to_instance_id: Optional[List[int]] = None) -> Dict[str, Path]:
         """
         Export all thesis graphics in one call.
 
         Args:
             merged_episodes: Pre-computed merged episodes (optional). If None, will be computed.
+            window_step: Step between processed windows (default 1). Used to scale X-axis.
 
         Returns:
             Dict mapping graph names to output paths
@@ -793,11 +859,21 @@ class ThesisGraphicsExporter:
             'τ_adapt': adaptive_window,
             'warm_up': warm_up_windows,
             'merge_gap': merge_gap,
-            'seed': seed
+            'seed': seed,
+            'window_step': max(1, int(window_step)),
         }
+        if warm_up_instances is not None:
+            params['warm_up_instances'] = int(warm_up_instances)
+        if signal_to_instance_id is not None:
+            params['signal_to_instance_id'] = list(signal_to_instance_id)
 
         # Apply warm-up filtering
-        drift_indices_filtered = apply_warmup(drift_indices, warm_up_windows, window_size)
+        drift_indices_filtered = apply_warmup(
+            drift_indices,
+            warm_up_windows,
+            window_size,
+            warm_up_instances=warm_up_instances
+        )
         drift_types_filtered = {k: v for k, v in drift_types.items() if k in drift_indices_filtered}
 
         # Merge events (use provided or compute)

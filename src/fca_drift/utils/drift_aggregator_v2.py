@@ -530,11 +530,7 @@ class DriftAggregatorV2:
     # ------------------------------------------------------------------
 
     def _classify_episode(self, indices: List[int], z_scores: List[float], vote_map: Dict[str, int]) -> str:
-        """Classify an already merged episode by signal shape.
-
-        FIX: sudden_duration_limit tightened from window_size to window_size // 3.
-        A genuine sudden drift should produce a compact burst, not a 300-step episode.
-        """
+        """Classify an already merged episode by signal shape."""
         if not indices:
             return "unknown"
 
@@ -549,6 +545,22 @@ class DriftAggregatorV2:
         peak_z = float(max(z_scores) if z_scores else self._compute_robust_z(peak_idx))
         duration = end - start + 1
         hit_count = len(indices)
+
+        # ── FAST PATH for small episodes (raw_hits ≤ 2) ──────────────────
+        # With 1-2 hits there is not enough shape information to run the full
+        # shape analysis. Classify purely by Z-score of the peak:
+        #   peak_z ≥ SUDDEN_Z_THRESHOLD (2.5) → sudden
+        #   peak_z ≥ 1.2                      → gradual
+        #   otherwise                          → gradual (elevated but mild)
+        if hit_count <= 2:
+            sudden_peak_floor = max(
+                self._high_peak_threshold,
+                self._global_mu + 1.2 * self._global_sigma,
+            )
+            if peak_z >= self.SUDDEN_Z_THRESHOLD and peak >= sudden_peak_floor:
+                return "sudden"
+            return "gradual"
+
         compactness = float(duration / max(hit_count, 1))
         hit_density = float(hit_count / max(duration, 1))
 
@@ -582,9 +594,6 @@ class DriftAggregatorV2:
             return "recurring"
 
         sudden_peak_floor = max(self._high_peak_threshold, self._global_mu + 1.2 * self._global_sigma)
-        # FIX: was window_size (e.g. 300). Tightened to window_size // 3 (e.g. 100).
-        # A sudden drift is compact — if the episode spans more than 1/3 of a window
-        # it is more likely gradual or a noisy cluster, not a true sudden event.
         sudden_duration_limit = max(self.window_size // 3, 6)
 
         if (
@@ -596,7 +605,6 @@ class DriftAggregatorV2:
         ):
             return "sudden"
 
-        # Incremental: long smooth trend with sustained monotonic rise and no sharp spike.
         if (
             duration >= max(self.window_size, 8)
             and monotonic_ratio >= 0.75
@@ -606,7 +614,6 @@ class DriftAggregatorV2:
         ):
             return "incremental"
 
-        # Gradual: sustained elevated phase / plateau without abrupt jump.
         if (
             duration >= max(self.window_size, 6)
             and (plateau_ratio >= 0.30 or active_duration >= max(self.window_size // 3, 4))
@@ -616,6 +623,12 @@ class DriftAggregatorV2:
             return "gradual"
 
         if peak_z >= 1.0 and max_drop > -0.5 * max(peak, 1e-6):
+            return "gradual"
+
+        # Last resort: classify by Z-score magnitude
+        if peak_z >= self.SUDDEN_Z_THRESHOLD:
+            return "sudden"
+        if peak_z >= 0.8:
             return "gradual"
 
         return "unknown"

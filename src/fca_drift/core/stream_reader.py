@@ -4,6 +4,7 @@ Stream Reader - River integration + fallback generators
 Fixes applied:
 - Agrawal/SEA: Manual drift streams instead of ConceptDriftStream (math overflow fix)
 - SEA: variant 0->3 for clearer structural drift in concept lattice
+- Waveform: manual drift (has_noise False->True) for a clear structural change
 - SPAM: UTF-8 encoding wrapper (fixes Windows cp1251 error)
 - INSECTS: removed (HTTP 404 on river server)
 - MV: removed (does not exist in river)
@@ -159,6 +160,43 @@ class _ManualDriftSEA:
                 current += 1
 
 
+class _ManualDriftWaveform:
+    """Waveform with one or more sudden drifts.
+
+    Switches the generator from has_noise=False to has_noise=True at the
+    specified drift positions. This injects additional noise features,
+    producing a clear structural change in the input distribution.
+    """
+    def __init__(self, seed: int, drift_positions: list[int]):
+        self.seed = seed
+        self.drift_positions = sorted(drift_positions)
+
+    def __iter__(self):
+        noise_flags = [False, True]
+        positions = list(self.drift_positions)
+        current = 0
+        segments = positions + [None]
+
+        for seg_idx, stop in enumerate(segments):
+            has_noise = noise_flags[seg_idx % len(noise_flags)]
+            generator = synth.Waveform(seed=self.seed + seg_idx, has_noise=has_noise)
+
+            if stop is None:
+                for x, y in generator:
+                    yield x, y
+                break
+
+            length = max(stop - current, 0)
+            if length == 0:
+                continue
+
+            for i, (x, y) in enumerate(generator):
+                if i >= length:
+                    break
+                yield x, y
+                current += 1
+
+
 # ---------------------------------------------------------------------------
 # StreamReader
 # ---------------------------------------------------------------------------
@@ -217,6 +255,10 @@ class StreamReader:
                 return _ManualDriftSEA(
                     seed=self.seed, drift_positions=drift_positions)
 
+            if dataset_lower == 'waveform':
+                return _ManualDriftWaveform(
+                    seed=self.seed, drift_positions=drift_positions)
+
             if dataset_lower == 'hyperplane':
                 return synth.Hyperplane(
                     seed=self.seed,
@@ -224,9 +266,6 @@ class StreamReader:
 
             if dataset_lower == 'mixed':
                 return synth.Mixed(seed=self.seed)
-
-            if dataset_lower == 'waveform':
-                return synth.Waveform(seed=self.seed)
 
         raise ValueError(
             f"Unknown dataset: '{self.dataset_name}'. "

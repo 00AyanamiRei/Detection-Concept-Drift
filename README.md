@@ -1,52 +1,52 @@
-# FCA-Based Concept Drift Detection System - KOMPLETNÝ NÁVOD
+# FCA-Based Concept Drift Detection System - COMPLETE GUIDE
 
-**Detekcia konceptového driftu pomocou metód formálnej analýzy konceptov**
+**Concept Drift Detection Using Formal Concept Analysis Methods**
 
-**Bakalárska práca - Technická univerzita v Košiciach, 2026**
+**Bachelor’s Thesis - Technical University of Košice, 2026**
 
-Tento dokument obsahuje **kompletný návod** na vytvorenie projektu od nuly.
-
----
-
-## 📋 Obsah
-
-1. [Úvod - O čo ide](#úvod---o-čo-ide)
-2. [Setup projektu od nuly](#setup-projektu-od-nuly)
-3. [Inštalácia všetkých závislostí](#inštalácia-všetkých-závislostí)
-4. [Implementácia - Všetky moduly](#implementácia---všetky-moduly)
-5. [Konfiguračné súbory](#konfiguračné-súbory)
-6. [Testy](#testy)
-7. [Spustenie experimentov](#spustenie-experimentov)
-8. [Riešenie problémov](#riešenie-problémov)
+This document provides a **complete guide** to building the project from scratch.
 
 ---
 
-## 🎯 Úvod - O čo ide
+## 📋 Table of Contents
 
-### Čo budeme vytvárať
+1. [Introduction - Overview](#introduction---overview)
+2. [Setting Up the Project from Scratch](#setting-up-the-project-from-scratch)
+3. [Installing All Dependencies](#installing-all-dependencies)
+4. [Implementation - All Modules](#implementation---all-modules)
+5. [Configuration Files](#configuration-files)
+6. [Tests](#tests)
+7. [Running Experiments](#running-experiments)
+8. [Troubleshooting](#troubleshooting)
 
-Systém pre **unsupervised** detekciu konceptového driftu v dátových tokoch pomocou **Formal Concept Analysis (FCA)**.
+---
 
-### Hlavný rozdiel od prototypu
+## 🎯 Introduction - Overview
 
-**Prototyp používa iba INTENTS:**
+### What We Are Building
+
+A system for **unsupervised** concept drift detection in data streams using **Formal Concept Analysis (FCA)**.
+
+### Main Difference from the Prototype
+
+**The prototype uses only INTENTS:**
 ```python
-# Prototyp (NESPRÁVNE pre diplomovku):
+# Prototype (INCORRECT for the thesis):
 similarity = jaccard_similarity(intents_t, intents_t_minus_1)
 ```
 
-**Náš systém používa PLNÚ CONCEPT LATTICE:**
+**Our system uses the FULL CONCEPT LATTICE:**
 ```python
-# Náš systém (SPRÁVNE):
+# Our system (CORRECT):
 similarity = compare_full_lattices(lattice_t, lattice_t_minus_1)
-# Porovnáva: extents + intents + hierarchy + structure
+# Compares: extents + intents + hierarchy + structure
 ```
 
-### Kľúčové komponenty
+### Key Components
 
-1. ✅ **Stream Processing** (z prototypu)
-2. ❌ **Full Concept Lattice** (NOVÉ - najdôležitejšie!)
-3. ❌ **Lattice Similarity** (NOVÉ)
+1. ✅ **Stream Processing** (from the prototype)
+2. ❌ **Full Concept Lattice** (NEW - most important!)
+3. ❌ **Lattice Similarity** (NEW)
 4. ❌ **Baseline Detectors** (DDM, EDDM, ADWIN)
 5. ❌ **Evaluation Metrics** (Precision, Recall, F1, Delay)
 6. ❌ **Experiment Runner** (Grid search, comparison)
@@ -55,18 +55,18 @@ similarity = compare_full_lattices(lattice_t, lattice_t_minus_1)
 
 ---
 
-## 🚀 Setup projektu od nuly
+## 🚀 Setting Up the Project from Scratch
 
-### Krok 1: Vytvorenie adresárovej štruktúry
+### Step 1: Create the Directory Structure
 ```bash
-# Hlavný adresár
+# Main directory
 mkdir fca-drift-detector
 cd fca-drift-detector
 
 # Git init
 git init
 
-# Vytvorenie štruktúry
+# Create the structure
 mkdir -p src/fca_drift/{core,fca,detection,evaluation,experiments,visualization,data,utils}
 mkdir -p tests/{test_core,test_fca,test_detection,test_evaluation}
 mkdir -p configs
@@ -75,7 +75,7 @@ mkdir -p notebooks
 mkdir -p docs
 mkdir -p scripts
 
-# __init__.py súbory
+# __init__.py files
 touch src/fca_drift/__init__.py
 touch src/fca_drift/core/__init__.py
 touch src/fca_drift/fca/__init__.py
@@ -91,7 +91,7 @@ touch tests/test_fca/__init__.py
 touch tests/test_detection/__init__.py
 touch tests/test_evaluation/__init__.py
 
-# .gitkeep pre prázdne adresáre
+# .gitkeep for empty directories
 touch experiments/results/csv/.gitkeep
 touch experiments/results/plots/.gitkeep
 touch experiments/results/reports/.gitkeep
@@ -102,7 +102,7 @@ touch scripts/.gitkeep
 touch notebooks/.gitkeep
 ```
 
-**Výsledná štruktúra:**
+**Resulting structure:**
 ```
 fca-drift-detector/
 ├── src/
@@ -142,7 +142,7 @@ fca-drift-detector/
 └── scripts/
 ```
 
-### Krok 2: Konfiguračné súbory
+### Step 2: Configuration Files
 
 #### `.gitignore`
 ```bash
@@ -351,31 +351,31 @@ addopts = "-v --cov=src/fca_drift --cov-report=html --cov-report=term"
 EOF
 ```
 
-### Krok 3: Vytvorenie virtuálneho prostredia
+### Step 3: Create a Virtual Environment
 ```bash
-# Vytvorte venv
+# Create a virtual environment
 python3.10 -m venv venv
 
-# Aktivujte (Linux/Mac)
+# Activate (Linux/Mac)
 source venv/bin/activate
 
-# Aktivujte (Windows)
+# Activate (Windows)
 # venv\Scripts\activate
 
 # Upgrade pip
 pip install --upgrade pip setuptools wheel
 
-# Nainštalujte závislosti
+# Install dependencies
 pip install -r requirements.txt
 
-# Dev závislosti
+# Development dependencies
 pip install -r requirements-dev.txt
 
-# Nainštalujte projekt v editable mode
+# Install the project in editable mode
 pip install -e .
 ```
 
-### Krok 4: Inštalácia Graphviz (systémová)
+### Step 4: Install Graphviz (System-Wide)
 ```bash
 # Ubuntu/Debian
 sudo apt-get update
@@ -385,17 +385,17 @@ sudo apt-get install graphviz graphviz-dev
 brew install graphviz
 
 # Windows
-# Stiahnite MSI: https://graphviz.org/download/
-# Nainštalujte a pridajte do PATH
+# Download the MSI installer: https://graphviz.org/download/
+# Install and add to PATH
 
-# Overenie
+# Verification
 dot -V
-# Očakávaný výstup: dot - graphviz version 2.x.x
+# Expected output: dot - graphviz version 2.x.x
 ```
 
-### Krok 5: Overenie inštalácie
+### Step 5: Verify the Installation
 ```bash
-# Test importov
+# Test imports
 python << 'PYEOF'
 import sys
 print(f"Python: {sys.version}")
@@ -424,11 +424,11 @@ PYEOF
 
 ---
 
-## 📝 Implementácia - Všetky moduly
+## 📝 Implementation - All Modules
 
-### Modul 1: Core - Stream Reader
+### Module 1: Core - Stream Reader
 
-**Súbor:** `src/fca_drift/core/stream_reader.py`
+**File:** `src/fca_drift/core/stream_reader.py`
 ```python
 """
 Stream Reader - River integration + fallback generators
@@ -592,9 +592,9 @@ if __name__ == "__main__":
         print(f"Instance {i}: y={y}, features={list(x.keys())[:3]}...")
 ```
 
-### Modul 2: Core - Window Manager
+### Module 2: Core - Window Manager
 
-**Súbor:** `src/fca_drift/core/window_manager.py`
+**File:** `src/fca_drift/core/window_manager.py`
 ```python
 """
 Sliding Window Manager
@@ -654,9 +654,9 @@ if __name__ == "__main__":
         print(f"Step {i}: {window}, len={len(window)}")
 ```
 
-### Modul 3: Core - Preprocessing
+### Module 3: Core - Preprocessing
 
-**Súbor:** `src/fca_drift/core/preprocessing.py`
+**File:** `src/fca_drift/core/preprocessing.py`
 ```python
 """
 Data Preprocessing - EMA + Hysteresis + Binarization
@@ -762,9 +762,9 @@ if __name__ == "__main__":
     print(binary)
 ```
 
-### Modul 4: Core - __init__.py
+### Module 4: Core - __init__.py
 
-**Súbor:** `src/fca_drift/core/__init__.py`
+**File:** `src/fca_drift/core/__init__.py`
 ```python
 """
 Core stream processing modules
@@ -782,9 +782,9 @@ __all__ = [
 ]
 ```
 
-### Modul 5: FCA - Context Builder
+### Module 5: FCA - Context Builder
 
-**Súbor:** `src/fca_drift/fca/context_builder.py`
+**File:** `src/fca_drift/fca/context_builder.py`
 ```python
 """
 Formal Context Builder
@@ -862,9 +862,9 @@ if __name__ == "__main__":
     print(f"Attribute 1 extent: {context.get_attribute_extent(1)}")
 ```
 
-### Modul 6: FCA - Lattice Builder (KRITICKÝ!)
+### Module 6: FCA - Lattice Builder (CRITICAL!)
 
-**Súbor:** `src/fca_drift/fca/lattice_builder.py`
+**File:** `src/fca_drift/fca/lattice_builder.py`
 ```python
 """
 Concept Lattice Builder - FULL LATTICE
@@ -1052,9 +1052,9 @@ if __name__ == "__main__":
     print(f"Bottom: {lattice.bottom_concept}")
 ```
 
-### Modul 7: FCA - Similarity Calculator (KRITICKÝ!)
+### Module 7: FCA - Similarity Calculator (CRITICAL!)
 
-**Súbor:** `src/fca_drift/fca/similarity.py`
+**File:** `src/fca_drift/fca/similarity.py`
 ```python
 """
 Lattice Similarity Calculator
@@ -1181,9 +1181,9 @@ if __name__ == "__main__":
     print(f"Similarity: {sim:.4f}")
 ```
 
-### Modul 8: FCA - __init__.py
+### Module 8: FCA - __init__.py
 
-**Súbor:** `src/fca_drift/fca/__init__.py`
+**File:** `src/fca_drift/fca/__init__.py`
 ```python
 """
 Formal Concept Analysis modules
@@ -1201,9 +1201,9 @@ __all__ = [
 ]
 ```
 
-### Modul 9: Detection - Base Detector
+### Module 9: Detection - Base Detector
 
-**Súbor:** `src/fca_drift/detection/base.py`
+**File:** `src/fca_drift/detection/base.py`
 ```python
 """
 Base class for drift detectors
@@ -1253,9 +1253,9 @@ class BaseDriftDetector(ABC):
         return len(self.drift_indices)
 ```
 
-### Modul 10: Detection - FCA Detector
+### Module 10: Detection - FCA Detector
 
-**Súbor:** `src/fca_drift/detection/fca_detector.py`
+**File:** `src/fca_drift/detection/fca_detector.py`
 ```python
 """
 FCA-based Drift Detector
@@ -1382,9 +1382,9 @@ if __name__ == "__main__":
     print("FCA Drift Detector loaded")
 ```
 
-### Modul 11: Detection - DDM
+### Module 11: Detection - DDM
 
-**Súbor:** `src/fca_drift/detection/ddm_detector.py`
+**File:** `src/fca_drift/detection/ddm_detector.py`
 ```python
 """
 Drift Detection Method (DDM)
@@ -1477,9 +1477,9 @@ if __name__ == "__main__":
     print("DDM Detector loaded")
 ```
 
-### Modul 12: Detection - EDDM
+### Module 12: Detection - EDDM
 
-**Súbor:** `src/fca_drift/detection/eddm_detector.py`
+**File:** `src/fca_drift/detection/eddm_detector.py`
 ```python
 """
 Early Drift Detection Method (EDDM)
@@ -1566,9 +1566,9 @@ if __name__ == "__main__":
     print("EDDM Detector loaded")
 ```
 
-### Modul 13: Detection - ADWIN Wrapper
+### Module 13: Detection - ADWIN Wrapper
 
-**Súbor:** `src/fca_drift/detection/adwin_detector.py`
+**File:** `src/fca_drift/detection/adwin_detector.py`
 ```python
 """
 ADWIN Detector - River wrapper
@@ -1632,9 +1632,9 @@ if __name__ == "__main__":
     print("ADWIN Detector loaded")
 ```
 
-### Modul 14: Detection - __init__.py
+### Module 14: Detection - __init__.py
 
-**Súbor:** `src/fca_drift/detection/__init__.py`
+**File:** `src/fca_drift/detection/__init__.py`
 ```python
 """
 Drift detection modules
@@ -1662,9 +1662,9 @@ if ADWIN_AVAILABLE:
     __all__.append('ADWINDetector')
 ```
 
-### Modul 15: Evaluation - Metrics
+### Module 15: Evaluation - Metrics
 
-**Súbor:** `src/fca_drift/evaluation/metrics.py`
+**File:** `src/fca_drift/evaluation/metrics.py`
 ```python
 """
 Evaluation Metrics for Drift Detection
@@ -1785,9 +1785,9 @@ if __name__ == "__main__":
     print_evaluation_report(metrics)
 ```
 
-### Modul 16: Evaluation - __init__.py
+### Module 16: Evaluation - __init__.py
 
-**Súbor:** `src/fca_drift/evaluation/__init__.py`
+**File:** `src/fca_drift/evaluation/__init__.py`
 ```python
 """
 Evaluation modules
@@ -1800,9 +1800,9 @@ __all__ = [
 ]
 ```
 
-### Modul 17: Utils - Logger
+### Module 17: Utils - Logger
 
-**Súbor:** `src/fca_drift/utils/logger.py`
+**File:** `src/fca_drift/utils/logger.py`
 ```python
 """
 Experiment Logger - CSV logging
@@ -1876,9 +1876,9 @@ if __name__ == "__main__":
     print("Logger loaded")
 ```
 
-### Modul 18: Utils - __init__.py
+### Module 18: Utils - __init__.py
 
-**Súbor:** `src/fca_drift/utils/__init__.py`
+**File:** `src/fca_drift/utils/__init__.py`
 ```python
 """
 Utility modules
@@ -1890,9 +1890,9 @@ __all__ = [
 ]
 ```
 
-### Modul 19: Visualization - Plots
+### Module 19: Visualization - Plots
 
-**Súbor:** `src/fca_drift/visualization/plots.py`
+**File:** `src/fca_drift/visualization/plots.py`
 ```python
 """
 Visualization - Time series plots
@@ -1952,9 +1952,9 @@ if __name__ == "__main__":
     plot_delta_L(delta_L, drifts, threshold=0.4, title="Test Plot")
 ```
 
-### Modul 20: Visualization - __init__.py
+### Module 20: Visualization - __init__.py
 
-**Súbor:** `src/fca_drift/visualization/__init__.py`
+**File:** `src/fca_drift/visualization/__init__.py`
 ```python
 """
 Visualization modules
@@ -1966,9 +1966,9 @@ __all__ = [
 ]
 ```
 
-### Modul 21: Main Entry Point
+### Module 21: Main Entry Point
 
-**Súbor:** `src/fca_drift/__main__.py`
+**File:** `src/fca_drift/__main__.py`
 ```python
 """
 Main entry point
@@ -2065,9 +2065,9 @@ if __name__ == "__main__":
     main()
 ```
 
-### Modul 22: Package __init__.py
+### Module 22: Package __init__.py
 
-**Súbor:** `src/fca_drift/__init__.py`
+**File:** `src/fca_drift/__init__.py`
 ```python
 """
 FCA-based Concept Drift Detection System
@@ -2094,11 +2094,11 @@ __all__ = [
 
 ---
 
-## 🧪 Testovanie
+## 🧪 Testing
 
 ### Quick Test Script
 
-**Súbor:** `test_all.py` (v root adresári)
+**File:** `test_all.py` (in the project root directory)
 ```python
 """
 Quick test of all modules
@@ -2159,19 +2159,19 @@ print("\nRun full experiment:")
 print("  python -m fca_drift --dataset agrawal --max-instances 500")
 ```
 
-**Spustite:**
+**Run:**
 ```bash
 python test_all.py
 ```
 
 ---
 
-## 🚀 Prvý experiment
+## 🚀 First Experiment
 ```bash
-# Aktivujte venv
+# Activate the virtual environment
 source venv/bin/activate
 
-# Spustite experiment
+# Run the experiment
 python -m fca_drift \
   --dataset agrawal \
   --max-instances 2000 \
@@ -2180,7 +2180,7 @@ python -m fca_drift \
   --output-dir experiments/results/first_test
 ```
 
-**Očakávaný výstup:**
+**Expected output:**
 ```
 ============================================================
   FCA Drift Detector
@@ -2201,7 +2201,7 @@ Processing stream...
 ============================================================
 ```
 
-**Skontrolujte výsledky:**
+**Check the results:**
 ```bash
 ls -la experiments/results/first_test/
 # steps.csv
@@ -2211,11 +2211,11 @@ ls -la experiments/results/first_test/
 
 ---
 
-## 📊 Konfiguračné súbory
+## 📊 Configuration Files
 
 ### Default Config
 
-**Súbor:** `configs/default.yaml`
+**File:** `configs/default.yaml`
 ```yaml
 # Default configuration
 dataset:
@@ -2242,7 +2242,7 @@ output:
 
 ### Experiment Config Template
 
-**Súbor:** `configs/experiment_template.yaml`
+**File:** `configs/experiment_template.yaml`
 ```yaml
 # Experiment configuration template
 experiment_name: my_experiment
@@ -2289,35 +2289,35 @@ output:
 
 ---
 
-## 🔧 Riešenie problémov
+## 🔧 Troubleshooting
 
-### Problem 1: Concepts library sa nenainštaluje
+### Problem 1: The concepts Library Fails to Install
 ```bash
-# Riešenie 1: Nainštalujte Graphviz najprv
+# Solution 1: Install Graphviz first
 sudo apt-get install graphviz graphviz-dev  # Ubuntu
 brew install graphviz  # macOS
 
-# Riešenie 2: Upgrade pip
+# Solution 2: Upgrade pip
 pip install --upgrade pip setuptools wheel
 
-# Riešenie 3: Skúste z GitHub
+# Solution 3: Try installing from GitHub
 pip install git+https://github.com/xflr6/concepts.git
 ```
 
 ### Problem 2: Import errors
 ```bash
-# Skontrolujte PYTHONPATH
+# Check PYTHONPATH
 export PYTHONPATH="${PYTHONPATH}:$(pwd)/src"
 
-# Alebo reinstalujte
+# Or reinstall
 pip uninstall fca-drift-detector
 pip install -e .
 ```
 
 ### Problem 3: River timeout
 ```bash
-# Použite fallback generátory
-# Systém automaticky prepne na fallback ak River nie je dostupný
+# Use fallback generators
+# The system automatically switches to fallback mode if River is unavailable
 ```
 
 ### Problem 4: Graphviz "dot not found"
@@ -2328,29 +2328,29 @@ sudo apt-get install graphviz
 # macOS
 brew install graphviz
 
-# Windows - pridajte do PATH:
+# Windows - add to PATH:
 # C:\Program Files\Graphviz\bin
 ```
 
 ---
 
-## 📚 Ďalšie kroky
+## 📚 Next Steps
 
-### 1. Implementujte Grid Search
+### 1. Implement Grid Search
 
-**Súbor:** `src/fca_drift/experiments/runner.py`
+**File:** `src/fca_drift/experiments/runner.py`
 
-(Príliš dlhý na zahrnutie tu - implementujte podľa návrhov zo summary)
+(Too long to include here - implement it based on the recommendations in the summary)
 
-### 2. Pridajte Lattice Visualization
+### 2. Add Lattice Visualization
 
-**Súbor:** `src/fca_drift/visualization/lattice_viz.py`
+**File:** `src/fca_drift/visualization/lattice_viz.py`
 
 (Note: Hasse diagram visualization is not generated in current version)
 
-### 3. Vytvorte Unit Testy
+### 3. Create Unit Tests
 ```bash
-# Príklad test
+# Example test
 # tests/test_fca/test_lattice.py
 import pytest
 from fca_drift.fca import ConceptLattice, build_formal_context
@@ -2366,7 +2366,7 @@ def test_lattice_building():
     assert lattice.top_concept is not None
 ```
 
-### 4. Spustite Experimenty
+### 4. Run Experiments
 ```bash
 # Grid search
 python scripts/run_grid_search.py
@@ -2382,42 +2382,42 @@ python scripts/generate_report.py
 
 ## ✅ Checklist
 
-- [ ] Vytvorená adresárová štruktúra
-- [ ] Nainštalované všetky závislosti
-- [ ] Graphviz funguje
-- [ ] Core moduly fungujú
-- [ ] FCA moduly fungujú (lattice!)
-- [ ] Detection moduly fungujú
-- [ ] Evaluation funguje
-- [ ] Logger funguje
-- [ ] Prvý experiment úspešný
-- [ ] CSV súbory sa vytvárajú
-- [ ] Grafy sa generujú
-- [ ] Grid search implementovaný
-- [ ] Comparison implementovaný
-- [ ] Unit testy vytvorené
-- [ ] Dokumentácia kompletná
+- [ ] Directory structure created
+- [ ] All dependencies installed
+- [ ] Graphviz works
+- [ ] Core modules work
+- [ ] FCA modules work (including the lattice!)
+- [ ] Detection modules work
+- [ ] Evaluation works
+- [ ] Logger works
+- [ ] First experiment completed successfully
+- [ ] CSV files are generated
+- [ ] Plots are generated
+- [ ] Grid search implemented
+- [ ] Comparison implemented
+- [ ] Unit tests created
+- [ ] Documentation complete
 
 ---
 
-## 🎓 Pre diplomovú prácu
+## 🎓 For the Thesis
 
-### Experimenty na zahrnutie
+### Experiments to Include
 
-1. **Elec2** (reálne dáta) - W=100, θ=0.4
+1. **Elec2** (real-world data) - W=100, θ=0.4
 2. **Agrawal sudden** - W=50, θ=0.3
 3. **Agrawal gradual** - W=100, θ=0.4
 4. **Sensitivity analysis** - grid search
 5. **Comparison** - FCA vs DDM/EDDM/ADWIN
 
-### Metriky na vyhodnotenie
+### Evaluation Metrics
 
 - Precision, Recall, F1-score
 - Detection delay
 - False positive rate
 - Computational time
 
-### Vizualizácie
+### Visualizations
 
 - ΔL_t time series
 - Drift statistics and comparison metrics
@@ -2498,7 +2498,7 @@ create_lattice_animator(detector.lattice_objects,
 
 ---
 
-**🚀 Teraz máte kompletný systém pripravený na implementáciu!**
+**🚀 You now have a complete system ready for implementation!**
 
 Git commit:
 ```bash

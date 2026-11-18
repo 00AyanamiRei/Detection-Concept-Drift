@@ -61,19 +61,19 @@ class DriftEvaluator:
         matched_true = set()
         matched_detected = set()
 
-        # Find TPs
+        # Find TPs: only detections at/after the true drift within tolerance
         for true_point in self.true_drift_points:
-            closest = self._find_closest(true_point, detected)
+            candidates = [
+                det for det in detected
+                if det not in matched_detected and true_point <= det <= true_point + self.tolerance
+            ]
 
-            if closest is not None:
-                distance = abs(closest - true_point)
-                if distance <= self.tolerance:
-                    TP += 1
-                    delays.append(closest - true_point)
-                    matched_true.add(true_point)
-                    matched_detected.add(closest)
-                else:
-                    FN += 1
+            if candidates:
+                closest = min(candidates)
+                TP += 1
+                delays.append(closest - true_point)
+                matched_true.add(true_point)
+                matched_detected.add(closest)
             else:
                 FN += 1
 
