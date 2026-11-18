@@ -1,58 +1,79 @@
-# API referencie (manuálny prehľad)
+# API Reference
 
-Táto sekcia mapuje hlavné triedy a funkcie podľa balíkov. Detaily implementácie
-nájdeš priamo v `src/fca_drift/`.
+This page summarizes the main public-facing classes and functions in the `fca_drift` package. For function signatures and implementation details, see [`src/fca_drift/`](../src/fca_drift/).
 
 ## `fca_drift.core`
-- `StreamReader(dataset_name, seed=42, **kwargs)`: jednotný vstup pre streamy.
-  Podporuje real datasets z `river` a syntetické (`agrawal`, `sea`, `waveform`,
-  `hyperplane`, `mixed`). Parametre `drift_position`/`drift_positions` riadia
-  syntetické drifty.
-- `StreamWrapper(stream, max_instances=None)`: obmedzí počet inštancií zo streamu.
-- `SlidingWindow(size)`: FIFO okno nad streamom.
-- `DataPreprocessor(...)`: kvantilová binarizácia pre FCA kontext.
-  Kľúčové metódy: `preprocess_window`, `get_frozen_thresholds`.
-- `get_available_datasets()`: zoznam podporovaných datasetov.
+
+| Interface | Description |
+| --- | --- |
+| `StreamReader(dataset_name, seed=42, **kwargs)` | Unified stream source interface. Supports datasets from River and synthetic streams, including `agrawal`, `sea`, `waveform`, `hyperplane`, and `mixed`. Synthetic drift positions can be specified through `drift_position` or `drift_positions`, depending on the generator. |
+| `StreamWrapper(stream, max_instances=None)` | Limits the number of observations read from a stream. |
+| `SlidingWindow(size)` | Maintains a fixed-size FIFO window of observations. |
+| `DataPreprocessor(...)` | Converts window data into a binary representation for FCA using quantile-based thresholds. Key methods: `preprocess_window` and `get_frozen_thresholds`. |
+| `get_available_datasets()` | Returns supported dataset names. |
 
 ## `fca_drift.fca`
-- `FormalContext`: reprezentácia (G, M, I) pre FCA.
-- `build_formal_context(binary_matrix)`: vytvorenie kontextu z binárnej matice.
-- `FormalConcept`: dvojica extent/intent.
-- `ConceptLattice`: výpočet mriežky, hierarchie a úrovní.
-  Kľúčová metóda: `build_from_context(formal_context, max_objects=50)`.
-- `LatticeSimilarityCalculator`: porovnanie mriežok a výpočet podobnosti.
+
+| Interface | Description |
+| --- | --- |
+| `FormalContext` | Represents an FCA context $(G, M, I)$. |
+| `build_formal_context(binary_matrix)` | Creates a formal context from a binary matrix. |
+| `FormalConcept` | Represents a concept through its extent and intent. |
+| `ConceptLattice` | Builds concepts, hierarchy, and lattice levels. Key method: `build_from_context(formal_context, max_objects=50)`. |
+| `LatticeSimilarityCalculator` | Computes similarity between concept lattices. |
 
 ## `fca_drift.detection`
-- `DriftEvent`: dátová trieda udalosti driftu.
-- `BaseDriftDetector`: abstraktný základ detektorov.
-- `FCADriftDetector`: hlavný detektor nad FCA mriežkami.
-  Kľúčová metóda: `update(lattice, instance_id)`.
-- `DDM`, `EDDM`, `ADWINDetector`: baseline detektory nad chybou.
+
+| Interface | Description |
+| --- | --- |
+| `DriftEvent` | Data structure describing a detected drift event. |
+| `BaseDriftDetector` | Abstract base class for drift detectors. |
+| `FCADriftDetector` | Compares successive FCA lattices to detect drift. Key method: `update(lattice, instance_id)`. |
+| `DDM`, `EDDM`, `ADWINDetector` | Reference drift detectors based on prediction-error or numeric signals. |
 
 ## `fca_drift.evaluation`
-- `DriftEvaluator(true_drift_points, tolerance=50)`: precision/recall/F1/delay.
-- `print_evaluation_report(metrics, method_name="FCA")`.
+
+| Interface | Description |
+| --- | --- |
+| `DriftEvaluator(true_drift_points, tolerance=50)` | Evaluates detections against reference drift positions using precision, recall, F1-score, and detection delay. |
+| `print_evaluation_report(metrics, method_name="FCA")` | Prints a formatted evaluation summary. |
 
 ## `fca_drift.experiments`
-- `GridSearchRunner`: grid search pre parametre `window_size`, `theta`, `alpha`.
-- `DetectorComparison`: porovná FCA s DDM/EDDM (na rovnakom streame).
+
+| Interface | Description |
+| --- | --- |
+| `GridSearchRunner` | Explores combinations of `window_size`, `theta`, and `alpha`. |
+| `DetectorComparison` | Compares FCA detection with DDM and EDDM on the same stream. |
 
 ## `fca_drift.history`
-- `LatticeFrame`: snapshot mriežky a signálu.
-- `LatticeHistoryManager`: uchovávanie histórie a štatistík.
-- `LatticeComparator`: porovnanie okien pred/po drifte.
-- `LatticeHistorySerializer`: export do JSON/CSV.
-- `DriftStatusEnum`: normal/soft/hard/virtual.
+
+| Interface | Description |
+| --- | --- |
+| `LatticeFrame` | Captures a lattice snapshot and associated signal. |
+| `LatticeHistoryManager` | Stores lattice history and statistics. |
+| `LatticeComparator` | Compares windows before and after a drift event. |
+| `LatticeHistorySerializer` | Exports history to JSON or CSV. |
+| `DriftStatusEnum` | Represents the `normal`, `soft`, `hard`, and `virtual` statuses. |
 
 ## `fca_drift.utils`
-- `ExperimentLogger`: CSV/JSON logging.
-- `DriftAggregatorV2`: agregácia drift epizód (SSOT pre výsledky).
-- `DriftResults`: konsolidovaný výsledok pre reporty.
-- `DriftTypeClassifier`: klasifikácia typu driftu podľa signálu.
-- `AdvancedConclusionBuilder`, `ConclusionBuilder`: odporúčania pre závery.
+
+| Interface | Description |
+| --- | --- |
+| `ExperimentLogger` | Records experiment data in CSV and JSON formats. |
+| `DriftAggregatorV2` | Groups detections into drift episodes and provides the consolidated source of drift results. |
+| `DriftResults` | Consolidates results for reporting. |
+| `DriftTypeClassifier` | Classifies drift patterns from the change signal. |
+| `AdvancedConclusionBuilder`, `ConclusionBuilder` | Generate analytical conclusions for reports. |
 
 ## `fca_drift.visualization`
-- `DetailedReportGeneratorV2`: HTML report s grafmi a lokalizáciou.
-- `DriftAnalyzer`: textový rozbor driftov.
-- `LatticeSnapshotCollector`: zber párov mriežok pre reporty.
-- `plots`: kreslenie ΔL, distribúcie a synchronizovaných grafov.
+
+| Interface | Description |
+| --- | --- |
+| `DetailedReportGeneratorV2` | Generates localized HTML reports with plots. |
+| `DriftAnalyzer` | Produces a text-based analysis of detected drift. |
+| `LatticeSnapshotCollector` | Collects lattice pairs for reporting. |
+| `plots` | Provides plots of $\Delta L$, distributions, and synchronized signals. |
+
+## Related Documentation
+
+See the [Quick Start](quickstart.md) for usage examples and [Configuration](configuration.md) for parameter descriptions.

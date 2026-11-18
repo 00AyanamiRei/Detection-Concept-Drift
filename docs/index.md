@@ -1,22 +1,17 @@
-# FCA-based Concept Drift Detection System — Dokumentácia
+# Documentation
 
-Krátka, praktická dokumentácia k Python projektu na detekciu konceptového driftu
-pomocou Formal Concept Analysis (FCA).
+FCA-Based Concept Drift Detection is a Python project for detecting changes in data streams through Formal Concept Analysis (FCA). It builds formal concept lattices from sliding windows, compares successive lattices, and analyzes the resulting change signal to identify drift events.
 
-## Obsah
+## Guides
 
-- [Rýchly štart](quickstart.md)
-- [Konfigurácia](configuration.md)
-- [API referencie](api.md)
-- [Binarne vystupy (EXE)](binaries.md)
+- [Quick Start](quickstart.md) — install the project and run an experiment.
+- [Configuration](configuration.md) — reference for configuration templates and runtime parameters.
+- [API Reference](api.md) — overview of the main Python modules and interfaces.
+- [Windows Executable](binaries.md) — build and run a standalone executable with PyInstaller.
 
-## Čo tento systém robí
+For a project overview and technology stack, see the [main README](../README.md).
 
-- Spracuje dátový tok po oknách a z každej dávky vytvorí FCA mriežku.
-- Porovnáva mriežky v čase a vytvára signál zmeny.
-- Deteguje a agreguje drift epizódy, pripraví reporty a grafy.
-
-## Architektúra spracovania
+## Processing Architecture
 
 ```mermaid
 graph LR
@@ -28,26 +23,38 @@ graph LR
     F --> G[LatticeSimilarityCalculator]
     G --> H[FCADriftDetector]
     H --> I[DriftAggregatorV2]
-    I --> J[Reporty a grafy]
+    I --> J[Reports and Plots]
 ```
 
-## Signál driftu
+The application processes incoming observations in windows, binarizes their attributes, and constructs a formal context for each window. It then generates a concept lattice and compares it with the previous lattice. Drift events can be aggregated and represented in reports and plots.
 
-Podstata signálu je pokles podobnosti medzi dvoma po sebe idúcimi mriežkami:
+## Lattice Change Signal
 
-$$\Delta L_t = 1 - S(L_{t-1}, L_t)$$
+The dissimilarity between consecutive lattices is defined as:
 
-Vnútorná podobnosť mriežok je kombinácia viacerých zložiek:
+$$
+\Delta L_t = 1 - S(L_{t-1}, L_t)
+$$
 
-$$S(L_1, L_2) = \alpha S_c + \beta S_h + \gamma S_s$$
+The similarity measure combines concept, hierarchy, and structural components:
 
-kde $S_c$ je podobnosť konceptov, $S_h$ hierarchie a $S_s$ štruktúry.
+$$
+S(L_1, L_2) = \alpha S_c + \beta S_h + \gamma S_s
+$$
 
-## Kľúčové balíky
+Here, $S_c$ denotes concept similarity, $S_h$ hierarchy similarity, and $S_s$ structural similarity. These weights belong to the lattice-similarity calculation and are distinct from the detector's `--alpha` threshold parameter.
 
-- `core`: dátové toky, okná a binarizácia.
-- `fca`: formálny kontext, koncepty a mriežka.
-- `detection`: FCA detektor a baseline detektory.
-- `evaluation`: metriky (precision, recall, F1, delay).
-- `experiments`: grid search a porovnania.
-- `history`, `utils`, `visualization`: agregácia epizód a reporty.
+## Module Overview
+
+| Package | Responsibility |
+| --- | --- |
+| `core` | Stream sources, sliding windows, and preprocessing |
+| `fca` | Formal contexts, concept lattices, and similarity computation |
+| `detection` | FCA-based drift detection and reference detectors |
+| `evaluation` | Precision, recall, F1-score, and detection delay |
+| `experiments` | Parameter search and detector comparison |
+| `history` | Lattice snapshots and historical comparisons |
+| `utils` | Logging, drift-event aggregation, and result processing |
+| `visualization` | Plots, report generation, and drift analysis |
+
+The project is an experimental analysis tool. Drift detection quality depends on data characteristics and parameter selection; results should be evaluated against suitable reference points or baselines.

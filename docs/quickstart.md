@@ -1,21 +1,63 @@
-# Rýchly štart
+# Quick Start
 
-## Požiadavky
+This guide covers installation, a command-line experiment, and programmatic access to the FCA-based drift detector.
 
-- Python 3.10+.
-- Balíky z `requirements.txt`.
-- `graphviz` v systéme (používa ho knižnica `concepts`).
+## Requirements
 
-## Inštalácia
+- Python 3.10 or later.
+- Dependencies listed in `requirements.txt`.
+- Graphviz installed on the system where required by the FCA toolchain.
+
+## Installation
+
+From the project root, create a virtual environment:
 
 ```bash
 python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-pip install -e .
 ```
 
-## Najkratší programový príklad
+Activate it using the command for your terminal:
+
+```bash
+# Windows / Git Bash
+source .venv/Scripts/activate
+
+# Linux / macOS
+# source .venv/bin/activate
+```
+
+For Windows PowerShell, use `.venv\Scripts\Activate.ps1` instead.
+
+Install the dependencies and the project in editable mode:
+
+```bash
+python -m pip install -r requirements.txt
+python -m pip install -e .
+```
+
+## Run an Experiment
+
+The package exposes a command-line entry point:
+
+```bash
+python -m fca_drift --dataset agrawal --max-instances 10000 --window-size 300 --theta 0.4 --alpha 2.0 --drift-position 5000
+```
+
+If the console script is available after package installation, the equivalent command is:
+
+```bash
+fca-drift --dataset agrawal --max-instances 10000 --window-size 300 --theta 0.4 --alpha 2.0 --drift-position 5000
+```
+
+List the CLI arguments with:
+
+```bash
+python -m fca_drift --help
+```
+
+## Python Example
+
+The example below constructs concept lattices from sliding windows and sends them to the drift detector:
 
 ```python
 from fca_drift.core import StreamReader, StreamWrapper, SlidingWindow, DataPreprocessor
@@ -38,46 +80,41 @@ for idx, (x, y) in enumerate(stream):
         lattice.build_from_context(context, max_objects=50)
         detector.update(lattice, idx)
 
-print("Drifty:", detector.drift_indices)
+print("Detected drift positions:", detector.drift_indices)
 ```
 
-## CLI (fca-drift)
+This is a minimal API example. The full CLI workflow additionally handles experiment outputs and reporting.
 
-Po instalacii projektu je dostupny CLI entrypoint.
+## Additional Scripts
+
+Run a baseline-detector comparison (ADWIN, DDM, EDDM):
 
 ```bash
-python -m fca_drift --dataset agrawal --max-instances 10000 --window-size 300 --theta 0.4 --alpha 2.0 --drift-position 5000
+python scripts/run_baseline_comparison.py
 ```
 
-Ak mas projekt nainstalovany ako balicek, funguje aj:
+Run the virtual-drift probe:
 
 ```bash
-fca-drift --dataset agrawal --max-instances 10000 --window-size 300 --theta 0.4 --alpha 2.0 --drift-position 5000
+python scripts/virtual_drift_probe.py --dataset elec2 --max-instances 2500 --window-size 50
 ```
 
-## Spustenie skriptov
+## Result Verification
 
-- Baseline porovnanie (ADWIN, DDM, EDDM):
-  ```bash
-  python scripts\run_baseline_comparison.py
-  ```
-- Virtual drift probe (duálny signál):
-  ```bash
-  python scripts\virtual_drift_probe.py --dataset elec2 --max-instances 2500 --window-size 50
-  ```
-
-## Overenie výsledkov
+To compare a generated debug report against known drift positions, run:
 
 ```bash
-python verify_results.py experiments\results\<run>\report_debug.json ground_truth_5000_labels.json
+python verify_results.py "experiments/results/<run>/report_debug.json" ground_truth_5000_labels.json
 ```
 
-## EXE build
+Replace `<run>` with the output directory for the relevant experiment, and ensure both input files exist.
 
-Navod na vytvorenie .exe je v [docs/binaries.md](binaries.md).
+## Windows Executable
 
-## Poznámky a obmedzenia
+For optional Windows packaging, see [Windows Executable](binaries.md).
 
-- `run_methodology_suite.py` pouziva legacy `main.py` (zakomentovany). Odporucane je
-  spustat CLI cez `python -m fca_drift` alebo vytvoreny EXE.
-- Konfigurácie v `configs/` sú šablóny, momentálne ich priamo nenačítava kód.
+## Current Limitations
+
+- Configuration files under `configs/` are templates and are not automatically loaded by the current application.
+- `run_methodology_suite.py` refers to a legacy `main.py` workflow that is commented out. Prefer the package CLI (`python -m fca_drift`) for regular runs.
+- Detection results depend on the dataset and preprocessing and detector parameters; validate reported events against the available ground truth or reference methods.
